@@ -1,3 +1,5 @@
+import os
+
 import plaid
 from plaid.api import plaid_api
 
@@ -8,10 +10,18 @@ else:
 
 def get_plaid_client():
     client_id, secret = get_plaid_credentials()
+    plaid_env = os.getenv("PLAID_ENV", "production").strip().lower()
+
+    if plaid_env == "sandbox":
+        host = plaid.Environment.Sandbox
+    elif plaid_env == "production":
+        host = plaid.Environment.Production
+    else:
+        raise ValueError("PLAID_ENV must be 'sandbox' or 'production'")
 
     # Configure the Plaid SDK
     configuration = plaid.Configuration(
-        host=plaid.Environment.Production,
+        host=host,
         api_key={
             'clientId': client_id,
             'secret': secret,

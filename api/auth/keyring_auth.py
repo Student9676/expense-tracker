@@ -51,11 +51,11 @@ def authenticate_with_touch_id(
     return auth_success
 
 
-def _get_keychain_credentials(service_name, context):
+def _get_keychain_credentials(service_name, plaid_env, context):
     query = {
         Security.kSecClass: Security.kSecClassGenericPassword,
         Security.kSecAttrService: service_name,
-        Security.kSecAttrAccount: "plaid_credentials",
+        Security.kSecAttrAccount: f"plaid_credentials_{plaid_env}",
         Security.kSecReturnData: True,
         Security.kSecUseAuthenticationContext: context,
     }
@@ -69,19 +69,29 @@ def _get_keychain_credentials(service_name, context):
 def get_plaid_credentials():
     """Authenticate with Touch ID and return the stored Plaid credentials."""
     service_name = os.getenv("PLAID_SERVICE_NAME")
+    plaid_env = os.getenv("PLAID_ENV", "production").strip().lower()
     if not service_name:
         raise ValueError("PLAID_SERVICE_NAME is not configured in .env")
+    if plaid_env not in {"sandbox", "production"}:
+        raise ValueError("PLAID_ENV must be 'sandbox' or 'production'")
 
-    print("Requesting biometric authorization...")
+    print(f"Requesting biometric authorization for Plaid {plaid_env}...")
     context = LAContext.new()
-    if not authenticate_with_touch_id("access your Plaid credentials", context):
+    if not authenticate_with_touch_id(
+        f"access your Plaid {plaid_env} credentials", context
+    ):
         raise PermissionError("Touch ID authentication failed")
 
-    print("Touch ID verified. Fetching secure credentials...")
-    client_id, secret = _get_keychain_credentials(service_name, context)
+    print(f"Touch ID verified. Fetching Plaid {plaid_env} credentials...")
+    client_id, secret = _get_keychain_credentials(service_name, plaid_env, context)
 
     if not client_id or not secret:
-        raise ValueError("Plaid credentials not found! Run setup_secrets.py first.")
+        raise ValueError(
+            f"Plaid {plaid_env} credentials not found! Run setup_secrets.py first."
+        )
 
-    print("Successfully retrieved Plaid credentials from the macOS Keychain.")
+    print(
+        f"Successfully retrieved Plaid {plaid_env} credentials "
+        "from the macOS Keychain."
+    )
     return client_id, secret
