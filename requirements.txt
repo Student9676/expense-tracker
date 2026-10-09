@@ -1,3 +1,4 @@
-keyring
-python-dotenv
-getpass
+dotenv
+getpass4
+plaid-python
+pyobjc-framework-LocalAuthentication
