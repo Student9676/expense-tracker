@@ -1,0 +1,35 @@
+:root {
+  --ink: #18221f;
+  --muted: #65736e;
+  --paper: #fffdf8;
+  --wash: #f4f1e8;
+  --line: #d9d5c9;
+  --accent: #007f73;
+  --orange: #c05a27;
+  --green: #2b9b6a;
+  color: var(--ink);
+  background: #e9e5d9;
+  font-family: 'Avenir Next', Avenir, Helvetica, Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.38), transparent 44%),
+    #e9e5d9;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}

@@ -12,6 +12,28 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 
+def save_key(key_name, key_value, service_name, account=None):
+    """Save a generic-password value in the macOS Keychain."""
+    if not key_name or not key_value or not service_name:
+        raise ValueError("key_name, key_value, and service_name are required")
+
+    account = account or key_name
+    query = {
+        Security.kSecClass: Security.kSecClassGenericPassword,
+        Security.kSecAttrService: service_name,
+        Security.kSecAttrAccount: account,
+    }
+    Security.SecItemDelete(query)
+    attributes = {
+        **query,
+        Security.kSecValueData: str(key_value).encode("utf-8"),
+        Security.kSecAttrAccessible: Security.kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+    }
+    status, _ = Security.SecItemAdd(attributes, None)
+    if status != Security.errSecSuccess:
+        raise RuntimeError(f"Unable to store Keychain item: {status}")
+
+
 def authenticate_with_touch_id(
     reason_string="authorize access to your secure application",
     context=None,

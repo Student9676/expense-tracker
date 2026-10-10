@@ -1,4 +1,6 @@
 dotenv
+fastapi
 getpass4
 plaid-python
 pyobjc-framework-LocalAuthentication
+uvicorn
