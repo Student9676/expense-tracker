@@ -1,4 +1,9 @@
-import type { ApiResponse, ConnectionStatus, TransactionsResponse } from '../types/plaid'
+import type {
+  ApiResponse,
+  ConnectionStatus,
+  SaveTransactionsResult,
+  TransactionsResponse,
+} from '../types/plaid'
 import { request } from './client'
 
 export function checkServer(): Promise<ApiResponse> {
@@ -40,4 +45,13 @@ export function getTransactions(
 ): Promise<TransactionsResponse> {
   const params = new URLSearchParams({ start_date: startDate, end_date: endDate })
   return request<TransactionsResponse>(`/get_transactions?${params}`, { method: 'POST' })
+}
+
+/** Fetches transactions for the date range and saves them to the database. */
+export function saveTransactions(
+  startDate: string,
+  endDate: string,
+): Promise<SaveTransactionsResult> {
+  const params = new URLSearchParams({ start_date: startDate, end_date: endDate })
+  return request<SaveTransactionsResult>(`/api/save_transactions?${params}`, { method: 'POST' })
 }

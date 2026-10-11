@@ -131,6 +131,12 @@ h2 {
   align-items: end;
 }
 
+.transactions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .field {
   display: block;
   min-width: 0;
@@ -336,6 +342,10 @@ textarea {
 
   .transactions-controls {
     grid-template-columns: 1fr;
+  }
+
+  .transactions-actions button {
+    flex: 1 1 160px;
   }
 
   .advanced-body {

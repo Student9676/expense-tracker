@@ -73,12 +73,15 @@ function App() {
         startDate={transactions.startDate}
         endDate={transactions.endDate}
         status={transactions.status}
+        action={transactions.action}
         loading={transactions.loading}
         output={transactions.output}
         count={transactions.count}
+        saveResult={transactions.saveResult}
         onStartDateChange={transactions.setStartDate}
         onEndDateChange={transactions.setEndDate}
         onFetch={transactions.fetchTransactions}
+        onSave={transactions.saveToDatabase}
       />
     </main>
   )

@@ -7,6 +7,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Depends, HTTPException
 from contextlib import asynccontextmanager
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
@@ -18,6 +19,7 @@ from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 
 from credentials import get_api_credentials, save_access_token, get_access_token
+from database import init_database, save_transactions
 
 load_dotenv()
 
@@ -40,6 +42,13 @@ async def lifespan(app: FastAPI):
         # Handle keychain access and configuration errors gracefully
         print(f"Plaid client initialization failed: {e}")
         app.state.plaid_client = None
+
+    # Create the database tables once during server startup
+    try:
+        init_database()
+    except Exception as e:
+        # Saving will fail until this is fixed, but the rest of the server still works
+        print(f"Database initialization failed: {e}")
 
     yield  # Server starts running
 
@@ -220,19 +229,13 @@ async def set_access_token(request: Request, plaid_client: plaid_api.PlaidApi = 
     }
 
 
-@app.post(
-        "/get_transactions",
-        summary="Get all transactions between a specified time period for the connected account",
-        description="Retrieve all transactions between a specified time period for the connected account using the stored access token.",
-        status_code=200,
-)
-def get_transactions(
+def fetch_all_transactions(
+    plaid_client: plaid_api.PlaidApi,
+    access_token: str,
     start_date: datetime.date,
     end_date: datetime.date,
-    access_token: str = Depends(read_access_token),
-    plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
 ):
-    """Retrieve all transactions between a specified time period for the connected account using the stored access token."""
+    """Retrieve every transaction between two dates, following Plaid's pagination."""
     all_transactions = []
     offset = 0
     count = 500
@@ -256,10 +259,45 @@ def get_transactions(
         all_transactions.extend(transactions)
 
         offset += len(transactions)
-        if len(all_transactions) >= total_transactions:
+        # An empty page also ends the loop so it can never spin forever.
+        if not transactions or len(all_transactions) >= total_transactions:
             break
 
     return all_transactions
+
+
+@app.post(
+        "/get_transactions",
+        summary="Get all transactions between a specified time period for the connected account",
+        description="Retrieve all transactions between a specified time period for the connected account using the stored access token.",
+        status_code=200,
+)
+def get_transactions(
+    start_date: datetime.date,
+    end_date: datetime.date,
+    access_token: str = Depends(read_access_token),
+    plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
+):
+    """Retrieve all transactions between a specified time period for the connected account using the stored access token."""
+    return fetch_all_transactions(plaid_client, access_token, start_date, end_date)
+
+
+@app.post(
+    "/api/save_transactions",
+    summary="Fetch transactions and save them to the database",
+    description="Retrieve all transactions between a specified time period for the connected account and store them in the SQLite database. Safe to run repeatedly: existing transactions are updated, not duplicated.",
+    status_code=200,
+)
+def store_transactions(
+    start_date: datetime.date,
+    end_date: datetime.date,
+    access_token: str = Depends(read_access_token),
+    plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
+):
+    """Fetch transactions from Plaid and save everything returned to the database."""
+    transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
+    # Convert dates and datetimes to ISO strings, the same JSON the client receives.
+    return save_transactions(jsonable_encoder(transactions), start_date, end_date)
 
 
 
