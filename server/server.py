@@ -5,10 +5,10 @@ import datetime
 import plaid
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends, HTTPException, UploadFile, File
 from contextlib import asynccontextmanager
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
@@ -19,7 +19,20 @@ from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 
 from credentials import get_api_credentials, save_access_token, get_access_token
-from database import init_database, save_transactions
+from database import (
+    init_database,
+    save_transactions,
+    get_monthly_income,
+    save_monthly_income,
+    get_saved_transactions,
+    get_transaction_months,
+)
+from server.classifier import (
+    classify_transaction,
+    load_category_rules,
+    save_category_rules,
+    get_rules_file_path,
+)
 
 load_dotenv()
 
@@ -298,6 +311,160 @@ def store_transactions(
     transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
     # Convert dates and datetimes to ISO strings, the same JSON the client receives.
     return save_transactions(jsonable_encoder(transactions), start_date, end_date)
+
+
+# --- Monthly Income Endpoints ------------------------------------------------
+
+
+@app.get(
+    "/api/income",
+    summary="Get stored monthly income",
+    description="Retrieve the user's stored monthly income from the database.",
+    status_code=200,
+)
+def fetch_income(month: str | None = None):
+    return get_monthly_income(month)
+
+
+@app.post(
+    "/api/income",
+    summary="Save monthly income",
+    description="Store the user's monthly income in the database.",
+    status_code=200,
+)
+async def update_income(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    income_val = data.get("income", 0.0)
+    month_val = data.get("month")
+    try:
+        income_float = float(income_val)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid income value")
+    if income_float < 0:
+        raise HTTPException(status_code=400, detail="Income cannot be negative")
+
+    return save_monthly_income(income_float, month_val)
+
+
+# --- Category Rules Endpoints ------------------------------------------------
+
+
+@app.get(
+    "/api/category_rules",
+    summary="Get classification rules",
+    description="Retrieve the category rules for classifying transaction names.",
+    status_code=200,
+)
+def fetch_category_rules():
+    return load_category_rules()
+
+
+@app.post(
+    "/api/category_rules",
+    summary="Save classification rules",
+    description="Update the rules file used to classify transaction names into categories.",
+    status_code=200,
+)
+async def update_category_rules(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    return save_category_rules(data)
+
+
+@app.get(
+    "/api/category_rules/export",
+    summary="Export classification rules file",
+    description="Download the category rules JSON file.",
+    status_code=200,
+)
+def export_category_rules():
+    path = get_rules_file_path()
+    if not path.exists():
+        load_category_rules()  # ensures file is created with defaults
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename="category_rules.json",
+    )
+
+
+@app.post(
+    "/api/category_rules/import",
+    summary="Import classification rules file",
+    description="Upload and replace category rules from a JSON file or payload.",
+    status_code=200,
+)
+async def import_category_rules(request: Request):
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        uploaded = form.get("file")
+        if not uploaded:
+            raise HTTPException(status_code=400, detail="No file uploaded")
+        content = await uploaded.read()
+        try:
+            data = json.loads(content.decode("utf-8"))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Uploaded file is not valid JSON")
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    return save_category_rules(data)
+
+
+# --- Expenses Endpoints ------------------------------------------------------
+
+
+@app.get(
+    "/api/expenses",
+    summary="Get classified expenses",
+    description="Retrieve expenses from the database classified by category rules, with totals.",
+    status_code=200,
+)
+def fetch_expenses(month: str | None = None, expenses_only: bool = True):
+    rules = load_category_rules()
+    transactions = get_saved_transactions(month=month, expenses_only=expenses_only)
+    expenses = []
+    for tx in transactions:
+        name = tx.get("name") or tx.get("merchant_name") or "Unnamed Transaction"
+        category = classify_transaction(name, rules)
+        expenses.append({
+            "transaction_id": tx["transaction_id"],
+            "name": name,
+            "merchant_name": tx.get("merchant_name"),
+            "amount": tx["amount"],
+            "amount_cents": tx.get("amount_cents"),
+            "date": tx.get("date"),
+            "category": category,
+            "pfc_primary": tx.get("pfc_primary"),
+            "pfc_detailed": tx.get("pfc_detailed"),
+        })
+
+    total = sum(e["amount"] for e in expenses if e["amount"] is not None)
+    available_months = get_transaction_months()
+    income_data = get_monthly_income(month)
+    income = income_data["income"]
+    leftover = round(income - total, 2)
+
+    return {
+        "expenses": expenses,
+        "total_expenses": round(total, 2),
+        "income": income,
+        "leftover": leftover,
+        "count": len(expenses),
+        "month": month or "all",
+        "available_months": available_months,
+    }
+
+
 
 
 

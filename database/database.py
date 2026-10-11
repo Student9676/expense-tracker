@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS transaction_counterparties (
     phone_number     TEXT,
     PRIMARY KEY (transaction_id, position)
 );
+
+CREATE TABLE IF NOT EXISTS monthly_income (
+    month            TEXT PRIMARY KEY,
+    amount           REAL NOT NULL,
+    updated_at       TEXT NOT NULL
+);
 """
 
 COUNTERPARTY_FIELDS = (
@@ -416,3 +422,112 @@ def save_transactions(transactions: list[Any], start_date: date, end_date: date)
         "pending_removed": pending_removed,
         "total_in_database": total,
     }
+
+
+# --- Monthly Income & Querying -----------------------------------------------
+
+
+def get_monthly_income(month: str | None = None) -> dict[str, Any]:
+    """Retrieve saved monthly income for a given month or fall back to default."""
+    clean_m = clean_text(month)
+    with connect() as connection:
+        if clean_m and clean_m.lower() != "all":
+            row = connection.execute(
+                "SELECT month, amount, updated_at FROM monthly_income WHERE month = ?",
+                (clean_m,),
+            ).fetchone()
+            if row:
+                return {
+                    "month": row["month"],
+                    "income": float(row["amount"]),
+                    "updated_at": row["updated_at"],
+                }
+
+        # Check default entry
+        row = connection.execute(
+            "SELECT month, amount, updated_at FROM monthly_income WHERE month = 'default'"
+        ).fetchone()
+        if row:
+            return {
+                "month": clean_m or "default",
+                "income": float(row["amount"]),
+                "updated_at": row["updated_at"],
+            }
+
+        # Check any most recently updated entry
+        row = connection.execute(
+            "SELECT month, amount, updated_at FROM monthly_income ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            return {
+                "month": clean_m or row["month"],
+                "income": float(row["amount"]),
+                "updated_at": row["updated_at"],
+            }
+
+        return {"month": clean_m or "default", "income": 0.0, "updated_at": None}
+
+
+def save_monthly_income(amount: float, month: str | None = None) -> dict[str, Any]:
+    """Save monthly income for a specific month or as default."""
+    now = utc_now()
+    clean_m = clean_text(month)
+    if clean_m and clean_m.lower() == "all":
+        clean_m = "default"
+    key = clean_m or "default"
+
+    with connect() as connection:
+        connection.execute(
+            "INSERT INTO monthly_income (month, amount, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT (month) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at",
+            (key, float(amount), now),
+        )
+        if key != "default":
+            connection.execute(
+                "INSERT INTO monthly_income (month, amount, updated_at) VALUES ('default', ?, ?) "
+                "ON CONFLICT (month) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at",
+                (float(amount), now),
+            )
+
+    return {"month": key, "income": float(amount), "updated_at": now}
+
+
+def get_saved_transactions(
+    month: str | None = None, expenses_only: bool = False
+) -> list[dict[str, Any]]:
+    """Retrieve saved transactions from the database with optional month and expense filtering."""
+    query = (
+        "SELECT transaction_id, name, merchant_name, amount, amount_cents, "
+        "iso_currency_code, date, datetime, category, pfc_primary, pfc_detailed "
+        "FROM transactions"
+    )
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    clean_m = clean_text(month)
+    if clean_m and clean_m.lower() != "all":
+        clauses.append("strftime('%Y-%m', date) = ?")
+        params.append(clean_m)
+
+    if expenses_only:
+        clauses.append("amount > 0")
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += " ORDER BY date DESC, transaction_id DESC"
+
+    with connect() as connection:
+        rows = connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_transaction_months() -> list[str]:
+    """Return all distinct YYYY-MM months with transactions in descending order."""
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT strftime('%Y-%m', date) as m FROM transactions "
+            "WHERE date IS NOT NULL ORDER BY m DESC"
+        ).fetchall()
+        return [row["m"] for row in rows if row["m"]]
+
