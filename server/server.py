@@ -17,7 +17,6 @@ from plaid.model.products import Products
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 
-
 from credentials import get_api_credentials, save_access_token, get_access_token
 
 load_dotenv()
@@ -32,11 +31,21 @@ async def lifespan(app: FastAPI):
         # Handle keychain access errors gracefully
         print(f"Keychain access failed: {e}")
         app.state.access_token = None
-        
+
+    # Create the Plaid client once during server startup
+    try:
+        client = create_plaid_client()
+        app.state.plaid_client = client
+    except Exception as e:
+        # Handle keychain access and configuration errors gracefully
+        print(f"Plaid client initialization failed: {e}")
+        app.state.plaid_client = None
+
     yield  # Server starts running
-    
-    # Clear the token from memory on shutdown
+
+    # Clear the token and client from memory on shutdown
     app.state.access_token = None
+    app.state.plaid_client = None
 
 app = FastAPI(
     title="Expense Tracker Plaid Server",
@@ -58,8 +67,6 @@ PLAID_COUNTRY_CODES = [
 ]
 PLAID_REDIRECT_URI = os.getenv("PLAID_REDIRECT_URI") or None
 
-_plaid_client = None
-
 
 def get_plaid_host():
     """Return the Plaid host configured for the current environment."""
@@ -70,12 +77,8 @@ def get_plaid_host():
     raise ValueError("PLAID_ENV must be 'sandbox' or 'production'")
 
 
-def get_plaid_client():
-    """Create the shared Plaid client on the first explicit server operation."""
-    global _plaid_client
-    if _plaid_client is not None:
-        return _plaid_client
-
+def create_plaid_client():
+    """Build a Plaid client from the API credentials stored in the keychain."""
     client_id, secret = get_api_credentials()
     configuration = plaid.Configuration(
         host=get_plaid_host(),
@@ -85,18 +88,27 @@ def get_plaid_client():
             "plaidVersion": "2020-09-14",
         },
     )
-    _plaid_client = plaid_api.PlaidApi(plaid.ApiClient(configuration))
-    return _plaid_client
+    return plaid_api.PlaidApi(plaid.ApiClient(configuration))
 
 
 def read_access_token() -> str:
     token = getattr(app.state, "access_token", None)
     if not token:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Access token is missing or could not be retrieved from the Keychain."
         )
     return token
+
+
+def read_plaid_client() -> plaid_api.PlaidApi:
+    client = getattr(app.state, "plaid_client", None)
+    if not client:
+        raise HTTPException(
+            status_code=500,
+            detail="Plaid client is missing or could not be created from the Keychain credentials."
+        )
+    return client
 
 
 @app.get(
@@ -119,9 +131,11 @@ def health_check():
     status_code=200,
 )
 def initialize_plaid_client():
-    """Create the Plaid API client."""
-    was_initialized = _plaid_client is not None
-    get_plaid_client()
+    """Create the Plaid API client if it was not already created at startup."""
+    was_initialized = getattr(app.state, "plaid_client", None) is not None
+    if not was_initialized:
+        client = create_plaid_client()
+        app.state.plaid_client = client
     return {
         "status": "already initialized" if was_initialized else "initialized",
         "environment": PLAID_ENV,
@@ -134,7 +148,7 @@ def initialize_plaid_client():
     description="Create a Link token for connecting a financial institution.",
     status_code=200,
 )
-def create_link_token():
+def create_link_token(plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client)):
     """Receive a client request for a Plaid Link token and return it to the client."""
     link_request = LinkTokenCreateRequest(
         products=[Products(product) for product in PLAID_PRODUCTS],
@@ -147,7 +161,7 @@ def create_link_token():
         redirect_uri=PLAID_REDIRECT_URI,
     )
 
-    response = get_plaid_client().link_token_create(link_request)
+    response = plaid_client.link_token_create(link_request)
     return response.to_dict()
 
 
@@ -172,7 +186,7 @@ def save_plaid_access_token(access_token):
     description="Exchange the Link public token and securely save the access token.",
     status_code=200,
 )
-async def set_access_token(request: Request):
+async def set_access_token(request: Request, plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client)):
     """Exchange the public token with Plaid and securely save the access token."""
 
     form = await request.form()
@@ -184,8 +198,9 @@ async def set_access_token(request: Request):
         )
 
     exchange_request = ItemPublicTokenExchangeRequest(public_token=public_token)
-    response = get_plaid_client().item_public_token_exchange(exchange_request)
+    response = plaid_client.item_public_token_exchange(exchange_request)
     save_plaid_access_token(response["access_token"])
+    app.state.access_token = response["access_token"]
     return {
         "status": "connected",
         "item_id": response["item_id"],
@@ -193,12 +208,17 @@ async def set_access_token(request: Request):
 
 
 @app.post(
-        "get_transactions",
+        "/get_transactions",
         summary="Get all transactions between a specified time period for the connected account",
         description="Retrieve all transactions between a specified time period for the connected account using the stored access token.",
         status_code=200,
 )
-def get_transactions(start_date: datetime.date, end_date: datetime.date, access_token: str = Depends(read_access_token)):
+def get_transactions(
+    start_date: datetime.date,
+    end_date: datetime.date,
+    access_token: str = Depends(read_access_token),
+    plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
+):
     """Retrieve all transactions between a specified time period for the connected account using the stored access token."""
     all_transactions = []
     offset = 0
@@ -215,7 +235,7 @@ def get_transactions(start_date: datetime.date, end_date: datetime.date, access_
             ),
         )
 
-        response = get_plaid_client().transactions_get(request).to_dict()
+        response = plaid_client.transactions_get(request).to_dict()
 
         transactions = response["transactions"]
         total_transactions = response["total_transactions"]
