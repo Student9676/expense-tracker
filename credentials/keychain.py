@@ -12,28 +12,6 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 
-def save_key(key_name, key_value, service_name, account=None):
-    """Save a generic-password value in the macOS Keychain."""
-    if not key_name or not key_value or not service_name:
-        raise ValueError("key_name, key_value, and service_name are required")
-
-    account = account or key_name
-    query = {
-        Security.kSecClass: Security.kSecClassGenericPassword,
-        Security.kSecAttrService: service_name,
-        Security.kSecAttrAccount: account,
-    }
-    Security.SecItemDelete(query)
-    attributes = {
-        **query,
-        Security.kSecValueData: str(key_value).encode("utf-8"),
-        Security.kSecAttrAccessible: Security.kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-    }
-    status, _ = Security.SecItemAdd(attributes, None)
-    if status != Security.errSecSuccess:
-        raise RuntimeError(f"Unable to store Keychain item: {status}")
-
-
 def authenticate_with_touch_id(
     reason_string="authorize access to your secure application",
     context=None,
@@ -88,7 +66,7 @@ def _get_keychain_credentials(service_name, plaid_env, context):
     return credentials.get("client_id"), credentials.get("secret")
 
 
-def get_plaid_credentials():
+def get_api_credentials():
     """Authenticate with Touch ID and return the stored Plaid credentials."""
     service_name = os.getenv("PLAID_SERVICE_NAME")
     plaid_env = os.getenv("PLAID_ENV", "production").strip().lower()
@@ -117,3 +95,40 @@ def get_plaid_credentials():
         "from the macOS Keychain."
     )
     return client_id, secret
+
+
+def save_access_token(key_name, key_value, service_name, account=None):
+    """Save a generic-password value in the macOS Keychain."""
+    if not key_name or not key_value or not service_name:
+        raise ValueError("key_name, key_value, and service_name are required")
+
+    account = account or key_name
+    query = {
+        Security.kSecClass: Security.kSecClassGenericPassword,
+        Security.kSecAttrService: service_name,
+        Security.kSecAttrAccount: account,
+    }
+    Security.SecItemDelete(query)
+    attributes = {
+        **query,
+        Security.kSecValueData: str(key_value).encode("utf-8"),
+        Security.kSecAttrAccessible: Security.kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+    }
+    status, _ = Security.SecItemAdd(attributes, None)
+    if status != Security.errSecSuccess:
+        raise RuntimeError(f"Unable to store Keychain item: {status}")
+
+
+def get_access_token(service_name, plaid_env):
+    """Retrieve the saved Plaid access token from the macOS Keychain."""
+    account = f"plaid_access_token_{plaid_env}"
+    query = {
+        Security.kSecClass: Security.kSecClassGenericPassword,
+        Security.kSecAttrService: service_name,
+        Security.kSecAttrAccount: account,
+        Security.kSecReturnData: True,
+    }
+    status, data = Security.SecItemCopyMatching(query, None)
+    if status != Security.errSecSuccess:
+        return None
+    return bytes(data).decode("utf-8")

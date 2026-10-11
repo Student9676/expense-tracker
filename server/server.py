@@ -1,10 +1,12 @@
 import json
 import os
+import datetime
 
 import plaid
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends, HTTPException
+from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
@@ -12,16 +14,37 @@ from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchan
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
+from plaid.model.transactions_get_request import TransactionsGetRequest
+from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 
-from credentials import get_plaid_credentials, save_key
+
+from credentials import get_api_credentials, save_access_token, get_access_token
 
 load_dotenv()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Retrieve the access token once during server startup
+    try:
+        token = get_access_token(PLAID_SERVICE_NAME, PLAID_ENV)
+        app.state.access_token = token
+    except Exception as e:
+        # Handle keychain access errors gracefully
+        print(f"Keychain access failed: {e}")
+        app.state.access_token = None
+        
+    yield  # Server starts running
+    
+    # Clear the token from memory on shutdown
+    app.state.access_token = None
 
 app = FastAPI(
     title="Expense Tracker Plaid Server",
     description="HTTP server for Plaid authentication and setup operations.",
+    lifespan=lifespan,
 )
 
+PLAID_SERVICE_NAME = os.getenv("PLAID_SERVICE_NAME")
 PLAID_ENV = os.getenv("PLAID_ENV", "sandbox").strip().lower()
 PLAID_PRODUCTS = [
     product.strip()
@@ -34,6 +57,7 @@ PLAID_COUNTRY_CODES = [
     if country.strip()
 ]
 PLAID_REDIRECT_URI = os.getenv("PLAID_REDIRECT_URI") or None
+
 _plaid_client = None
 
 
@@ -52,7 +76,7 @@ def get_plaid_client():
     if _plaid_client is not None:
         return _plaid_client
 
-    client_id, secret = get_plaid_credentials()
+    client_id, secret = get_api_credentials()
     configuration = plaid.Configuration(
         host=get_plaid_host(),
         api_key={
@@ -63,6 +87,16 @@ def get_plaid_client():
     )
     _plaid_client = plaid_api.PlaidApi(plaid.ApiClient(configuration))
     return _plaid_client
+
+
+def read_access_token() -> str:
+    token = getattr(app.state, "access_token", None)
+    if not token:
+        raise HTTPException(
+            status_code=500, 
+            detail="Access token is missing or could not be retrieved from the Keychain."
+        )
+    return token
 
 
 @app.get(
@@ -123,7 +157,7 @@ def save_plaid_access_token(access_token):
     if not service_name:
         raise ValueError("PLAID_SERVICE_NAME is not configured in .env")
 
-    save_key(
+    save_access_token(
         "access_token",
         access_token,
         service_name,
@@ -156,6 +190,44 @@ async def set_access_token(request: Request):
         "status": "connected",
         "item_id": response["item_id"],
     }
+
+
+@app.post(
+        "get_transactions",
+        summary="Get all transactions between a specified time period for the connected account",
+        description="Retrieve all transactions between a specified time period for the connected account using the stored access token.",
+        status_code=200,
+)
+def get_transactions(start_date: datetime.date, end_date: datetime.date, access_token: str = Depends(read_access_token)):
+    """Retrieve all transactions between a specified time period for the connected account using the stored access token."""
+    all_transactions = []
+    offset = 0
+    count = 500
+
+    while True:
+        request = TransactionsGetRequest(
+            access_token=access_token,
+            start_date=start_date,
+            end_date=end_date,
+            options=TransactionsGetRequestOptions(
+                count=count,
+                offset=offset,
+            ),
+        )
+
+        response = get_plaid_client().transactions_get(request).to_dict()
+
+        transactions = response["transactions"]
+        total_transactions = response["total_transactions"]
+
+        all_transactions.extend(transactions)
+
+        offset += len(transactions)
+        if len(all_transactions) >= total_transactions:
+            break
+
+    return all_transactions
+
 
 
 def format_error(error):
