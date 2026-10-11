@@ -2,22 +2,29 @@ import type { ApiResponse } from '../types/plaid'
 
 const API_BASE = '/backend'
 
-export async function request(path: string, options?: RequestInit): Promise<ApiResponse> {
+function isRecord(value: unknown): value is ApiResponse {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export async function request<T = ApiResponse>(
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, options)
   const rawBody = await response.text()
-  let body: ApiResponse = {}
+  let body: unknown = {}
 
   try {
-    body = JSON.parse(rawBody) as ApiResponse
+    body = JSON.parse(rawBody)
   } catch {
     body = {}
   }
 
   if (!response.ok) {
-    const detail = body.detail ?? body.error
+    const detail = isRecord(body) ? (body.detail ?? body.error) : undefined
     const message = typeof detail === 'string' ? detail : rawBody.slice(0, 300)
     throw new Error(message || `Request failed with status ${response.status}`)
   }
 
-  return body
+  return body as T
 }

@@ -1,12 +1,24 @@
 import { AdvancedPanel } from './components/AdvancedPanel'
 import { ConnectButton } from './components/ConnectButton'
 import { StatusIndicator } from './components/StatusIndicator'
+import { TransactionsPanel } from './components/TransactionsPanel'
 import { usePlaidConnection } from './hooks/usePlaidConnection'
+import { useTransactions } from './hooks/useTransactions'
 import './App.css'
 
 function App() {
-  const { stage, busy, linkReady, publicToken, output, errorMessage, connect, manual } =
-    usePlaidConnection()
+  const {
+    stage,
+    connectionSource,
+    busy,
+    linkReady,
+    publicToken,
+    output,
+    errorMessage,
+    connect,
+    manual,
+  } = usePlaidConnection()
+  const transactions = useTransactions()
 
   return (
     <main className="shell">
@@ -33,7 +45,9 @@ function App() {
 
           {stage === 'connected' && (
             <p className="feedback feedback--success" role="status">
-              Account connected. The access token was created and saved on the server.
+              {connectionSource === 'saved'
+                ? 'Account already connected. A saved access token is ready to use.'
+                : 'Account connected. The access token was created and saved on the server.'}
             </p>
           )}
           {errorMessage && (
@@ -54,6 +68,18 @@ function App() {
           onOpenLink={manual.openLink}
         />
       </section>
+
+      <TransactionsPanel
+        startDate={transactions.startDate}
+        endDate={transactions.endDate}
+        status={transactions.status}
+        loading={transactions.loading}
+        output={transactions.output}
+        count={transactions.count}
+        onStartDateChange={transactions.setStartDate}
+        onEndDateChange={transactions.setEndDate}
+        onFetch={transactions.fetchTransactions}
+      />
     </main>
   )
 }

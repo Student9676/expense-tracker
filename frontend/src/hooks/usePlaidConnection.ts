@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
 import * as plaidApi from '../api/plaid'
-import type { ApiResponse, ConnectionStage } from '../types/plaid'
+import type { ApiResponse, ConnectionSource, ConnectionStage } from '../types/plaid'
 
 const LINK_TOKEN_STORAGE_KEY = 'plaid_link_token'
 const BUSY_STAGES: ConnectionStage[] = [
@@ -27,15 +27,25 @@ export function usePlaidConnection() {
   const [publicToken, setPublicToken] = useState('')
   const [output, setOutput] = useState<ApiResponse>({ status: 'ready' })
   const [stage, setStage] = useState<ConnectionStage>('idle')
+  const [connectionSource, setConnectionSource] = useState<ConnectionSource | null>(null)
 
   // Set when Plaid Link should open as soon as it is ready: after a fresh Link
   // token is created, or when returning from an OAuth redirect.
   const pendingOpenRef = useRef(Boolean(receivedRedirectUri && linkToken))
 
+  // True once an access token is known to be saved on the server. Used to return
+  // to "connected" (not "idle") after Link is closed or a manual step finishes.
+  const connectedRef = useRef(false)
+
   const handleError = useCallback((error: unknown) => {
     setOutput({ error: toErrorMessage(error) })
     setStage('error')
   }, [])
+
+  const getRestingStage = useCallback(
+    (): ConnectionStage => (connectedRef.current ? 'connected' : 'idle'),
+    [],
+  )
 
   const { open, ready } = usePlaidLink({
     token: linkToken,
@@ -52,6 +62,8 @@ export function usePlaidConnection() {
 
       try {
         setOutput(await plaidApi.exchangePublicToken(token))
+        connectedRef.current = true
+        setConnectionSource('new')
         setStage('connected')
       } catch (error) {
         handleError(error)
@@ -63,7 +75,7 @@ export function usePlaidConnection() {
         error: error?.display_message ?? error?.error_message ?? null,
         metadata,
       })
-      setStage(error ? 'error' : 'idle')
+      setStage(error ? 'error' : getRestingStage())
     },
   })
 
@@ -73,6 +85,27 @@ export function usePlaidConnection() {
       open()
     }
   }, [open, ready])
+
+  // On page load, skip the connect flow if an access token is already saved.
+  useEffect(() => {
+    let cancelled = false
+
+    plaidApi
+      .getConnectionStatus()
+      .then(({ connected }) => {
+        if (cancelled || !connected) return
+        connectedRef.current = true
+        setConnectionSource((current) => current ?? 'saved')
+        setStage((current) => (current === 'idle' ? 'connected' : current))
+      })
+      .catch(() => {
+        // Best-effort check: if it fails, the user can still connect manually.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const runCheckServer = useCallback(async () => {
     setStage('checking-server')
@@ -105,17 +138,17 @@ export function usePlaidConnection() {
     }
   }, [handleError, runCheckServer, runInitialize, runCreateLinkToken])
 
-  /** Wraps a single manual step so it reports errors and returns to idle. */
+  /** Wraps a single manual step so it reports errors and returns to its resting stage. */
   const runManualStep = useCallback(
     (step: () => Promise<void>) => async () => {
       try {
         await step()
-        setStage('idle')
+        setStage(getRestingStage())
       } catch (error) {
         handleError(error)
       }
     },
-    [handleError],
+    [getRestingStage, handleError],
   )
 
   const openLink = useCallback(() => open(), [open])
@@ -125,6 +158,7 @@ export function usePlaidConnection() {
 
   return {
     stage,
+    connectionSource,
     busy: BUSY_STAGES.includes(stage),
     linkReady: ready,
     publicToken,

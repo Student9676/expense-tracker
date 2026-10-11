@@ -124,6 +124,19 @@ def health_check():
     }
 
 
+@app.get(
+    "/api/connection_status",
+    summary="Check whether an account is connected",
+    description="Report whether an access token is already saved and loaded on the server.",
+    status_code=200,
+)
+def connection_status():
+    """Return whether an access token is available, without exposing it."""
+    return {
+        "connected": bool(getattr(app.state, "access_token", None)),
+    }
+
+
 @app.post(
     "/api/initialize",
     summary="Initialize the Plaid client",
