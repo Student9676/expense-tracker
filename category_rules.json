@@ -1,0 +1,70 @@
+{
+  "rules": [
+    {
+      "pattern": "Uber",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Lyft",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "McDonald's",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Starbucks",
+      "category": "Coffee & Cafes",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "SparkFun",
+      "category": "Electronics & Tech",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CREDIT CARD",
+      "category": "Bills & Payments",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "United Airlines",
+      "category": "Travel",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "INTRST PYMNT",
+      "category": "Banking & Fees",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Amazon",
+      "category": "Shopping",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Target",
+      "category": "Groceries & Supplies",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Walmart",
+      "category": "Groceries & Supplies",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Netflix",
+      "category": "Subscriptions & Entertainment",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Spotify",
+      "category": "Subscriptions & Entertainment",
+      "match_type": "contains"
+    }
+  ],
+  "default_category": "Uncategorized"
+}
