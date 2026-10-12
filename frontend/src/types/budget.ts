@@ -65,3 +65,31 @@ export interface RefreshTransactionsResult {
     total_in_database: number
   }
 }
+
+export interface CategorySummaryRow {
+  category: string
+  count: number
+  total: number
+  /** Percent of the net total (can be negative for credit-only categories). */
+  share: number
+}
+
+export interface PieSlice {
+  category: string
+  total: number
+  count: number
+  /** Percent of the positive total. */
+  share: number
+  is_other: boolean
+  merged_categories: number
+}
+
+export interface CategorySummaryResponse {
+  month: string
+  categories: CategorySummaryRow[]
+  pie: PieSlice[]
+  total: number
+  positive_total: number
+  count: number
+  excluded_count: number
+}

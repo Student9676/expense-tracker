@@ -10,11 +10,12 @@ import {
   LuTrash2,
   LuTriangleAlert,
 } from 'react-icons/lu'
-import type { CategoryRulesData, ExpenseItem } from '../types/budget'
+import type { CategoryRulesData, CategorySummaryResponse, ExpenseItem } from '../types/budget'
 import {
   deleteCustomExpense,
   downloadCategoryRulesFile,
   getCategoryRules,
+  getCategorySummary,
   getExpenses,
   getIncome,
   refreshPast3Months,
@@ -23,31 +24,14 @@ import {
   updateCustomExpense,
 } from '../api/budget'
 import { AddCustomExpenseModal } from './AddCustomExpenseModal'
+import { CategoryPieChart } from './CategoryPieChart'
 import { CategoryRulesModal } from './CategoryRulesModal'
 import { EditCustomExpenseModal } from './EditCustomExpenseModal'
+import { MonthStepper } from './MonthStepper'
+import { formatCurrency, formatMonthLabel } from '../utils/format'
 
-function formatCurrency(val: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val)
-}
-
-function formatMonthLabel(m: string): string {
-  if (!m || m.toLowerCase() === 'all') return 'All Months'
-  const parts = m.split('-')
-  if (parts.length === 2) {
-    const year = Number(parts[0])
-    const monthIndex = Number(parts[1]) - 1
-    const date = new Date(year, monthIndex, 1)
-    if (!Number.isNaN(date.getTime())) {
-      return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-    }
-  }
-  return m
-}
+/** True once the launch-time refresh has started (persists across BudgetPage remounts). */
+let hasAutoRefreshed = false
 
 export function BudgetPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-10')
@@ -84,6 +68,22 @@ export function BudgetPage() {
 
   // Autosave status state
   const [autosaveStatus, setAutosaveStatus] = useState<string | null>(null)
+
+  // Server-side category grouping (pie chart + totals table).
+  // Results are tagged with the request key so "loading" is derived, and the
+  // previous result stays visible while a new one is fetched.
+  const [summaryVersion, setSummaryVersion] = useState(0)
+  const [summaryResult, setSummaryResult] = useState<{
+    key: string
+    data: CategorySummaryResponse
+  } | null>(null)
+  const [summaryFailure, setSummaryFailure] = useState<{ key: string; message: string } | null>(
+    null,
+  )
+  const summaryKey = `${selectedMonth}|${expensesOnly}|${searchQuery}|${categoryFilter}|${summaryVersion}`
+  const summary = summaryResult?.data ?? null
+  const summaryError = summaryFailure?.key === summaryKey ? summaryFailure.message : null
+  const summaryLoading = summaryResult?.key !== summaryKey && summaryFailure?.key !== summaryKey
 
   // Load rules
   const refreshRules = useCallback(async () => {
@@ -130,6 +130,41 @@ export function BudgetPage() {
     }
   }, [selectedMonth, expensesOnly])
 
+  // Fetch category totals from the server whenever the table's rows could change
+  useEffect(() => {
+    let ignore = false
+    const key = summaryKey
+    // Debounce typing in the search box; other changes fetch immediately.
+    const timer = setTimeout(
+      () => {
+        getCategorySummary({
+          month: selectedMonth,
+          expensesOnly,
+          search: searchQuery,
+          category: categoryFilter,
+        })
+          .then((data) => {
+            if (ignore) return
+            setSummaryResult({ key, data })
+            setSummaryFailure(null)
+          })
+          .catch((err) => {
+            if (ignore) return
+            setSummaryFailure({
+              key,
+              message: err instanceof Error ? err.message : 'Failed to load category totals',
+            })
+          })
+      },
+      searchQuery ? 250 : 0,
+    )
+
+    return () => {
+      ignore = true
+      clearTimeout(timer)
+    }
+  }, [summaryKey, selectedMonth, expensesOnly, searchQuery, categoryFilter])
+
   const refreshExpenses = useCallback(async () => {
     setLoadingExpenses(true)
     try {
@@ -138,6 +173,7 @@ export function BudgetPage() {
       if (exp.available_months && exp.available_months.length > 0) {
         setAvailableMonths(exp.available_months)
       }
+      setSummaryVersion((v) => v + 1)
     } catch (err) {
       setExpensesError(err instanceof Error ? err.message : 'Failed to reload expenses')
     } finally {
@@ -197,6 +233,7 @@ export function BudgetPage() {
 
     try {
       await toggleTransactionExclusion(transactionId, selectedMonth, nextExcluded)
+      setSummaryVersion((v) => v + 1)
       setAutosaveStatus('Preference autosaved')
       setTimeout(() => setAutosaveStatus(null), 2500)
     } catch (err) {
@@ -221,6 +258,7 @@ export function BudgetPage() {
       setExpenses((prev) =>
         prev.filter((item) => item.transaction_id !== customId && item.custom_id !== customId),
       )
+      setSummaryVersion((v) => v + 1)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to delete custom expense')
     }
@@ -242,30 +280,45 @@ export function BudgetPage() {
     refreshExpenses()
   }
 
-  // Handle Refresh Past 3 Months
-  const handleRefreshPast3Months = async () => {
-    setRefreshing(true)
-    setRefreshMessage(null)
-    setRefreshError(null)
+  // Refresh the past 3 months from the bank. `auto` is true for the launch-time run.
+  const runRefresh = useCallback(
+    async (auto: boolean) => {
+      setRefreshing(true)
+      setRefreshMessage(null)
+      setRefreshError(null)
 
-    try {
-      const res = await refreshPast3Months()
-      const savedCount = res.save_result.inserted + res.save_result.updated
-      setRefreshMessage(
-        `Successfully refreshed past 3 months! (${savedCount} transactions updated/inserted, ${res.save_result.total_in_database} total in DB).`,
-      )
-      await refreshExpenses()
-      setTimeout(() => setRefreshMessage(null), 6000)
-    } catch (err) {
-      setRefreshError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to refresh transactions. Please ensure your account is connected in Connection Desk.',
-      )
-    } finally {
-      setRefreshing(false)
-    }
+      try {
+        const res = await refreshPast3Months()
+        const savedCount = res.save_result.inserted + res.save_result.updated
+        setRefreshMessage(
+          `${auto ? 'Automatically refreshed' : 'Successfully refreshed'} past 3 months! (${savedCount} transactions updated/inserted, ${res.save_result.total_in_database} total in DB).`,
+        )
+        await refreshExpenses()
+        setTimeout(() => setRefreshMessage(null), 6000)
+      } catch (err) {
+        const detail =
+          err instanceof Error
+            ? err.message
+            : 'Failed to refresh transactions. Please ensure your account is connected in Connection Desk.'
+        setRefreshError(auto ? `Automatic refresh failed: ${detail}` : detail)
+      } finally {
+        setRefreshing(false)
+      }
+    },
+    [refreshExpenses],
+  )
+
+  const handleRefreshPast3Months = () => {
+    void runRefresh(false)
   }
+
+  // Refresh once when the app launches. The module-level flag keeps it from running again
+  // when switching tabs (the page remounts) or when React StrictMode re-runs effects in dev.
+  useEffect(() => {
+    if (hasAutoRefreshed) return
+    hasAutoRefreshed = true
+    void runRefresh(true)
+  }, [runRefresh])
 
   // Filtered expenses based on search and category filter
   const filteredExpenses = useMemo(() => {
@@ -306,6 +359,13 @@ export function BudgetPage() {
   const leftover = useMemo(() => {
     return effectiveIncome - totalExpenses
   }, [effectiveIncome, totalExpenses])
+
+  // Months for the dropdowns and stepper: newest first, always including the selected month
+  const monthOptions = useMemo(() => {
+    const set = new Set(availableMonths)
+    if (selectedMonth && selectedMonth.toLowerCase() !== 'all') set.add(selectedMonth)
+    return Array.from(set).sort((a, b) => b.localeCompare(a))
+  }, [availableMonths, selectedMonth])
 
   // Unique categories in current transactions
   const uniqueCategories = useMemo(() => {
@@ -386,7 +446,7 @@ export function BudgetPage() {
                 value={selectedMonth}
                 onChange={(e) => handleMonthChange(e.target.value)}
               >
-                {availableMonths.map((m) => (
+                {monthOptions.map((m) => (
                   <option key={m} value={m}>
                     {formatMonthLabel(m)}
                   </option>
@@ -507,13 +567,28 @@ export function BudgetPage() {
         </div>
       )}
 
+      {/* Category Chart Section */}
+      <section className="workspace chart-workspace" aria-label="Spending by category">
+        <div className="panel-body">
+          <div className="section-heading">
+            <span className="section-number">02</span>
+            <h3>Spending by Category</h3>
+          </div>
+          <p className="table-subtitle">
+            {formatMonthLabel(selectedMonth)} · follows the expenses table's filters and
+            exclusions.
+          </p>
+          <CategoryPieChart summary={summary} loading={summaryLoading} error={summaryError} />
+        </div>
+      </section>
+
       {/* Expenses Table Section */}
       <section className="workspace expenses-workspace" aria-label="Expenses table">
         <div className="panel-body">
           <div className="expenses-table-header">
             <div>
               <div className="section-heading">
-                <span className="section-number">02</span>
+                <span className="section-number">03</span>
                 <h3>Expenses Table</h3>
               </div>
               <p className="table-subtitle">
@@ -522,6 +597,11 @@ export function BudgetPage() {
             </div>
 
             <div className="expenses-top-actions">
+              <MonthStepper
+                months={monthOptions}
+                value={selectedMonth}
+                onChange={handleMonthChange}
+              />
               <button
                 type="button"
                 className="btn-add-custom"

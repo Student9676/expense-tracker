@@ -1433,4 +1433,159 @@ button svg,
   }
 }
 
+/* ==========================================================================
+   Category chart & month stepper
+   ========================================================================== */
 
+.month-stepper {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.month-stepper-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  width: 40px;
+  padding: 0;
+}
+
+.month-stepper-select {
+  min-height: 40px;
+  min-width: 170px;
+  margin: 0 -1px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.expenses-top-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.chart-workspace {
+  margin-bottom: 24px;
+}
+
+.pie-empty {
+  padding: 24px 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  text-align: center;
+}
+
+.pie-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
+}
+
+.pie-body--stacked {
+  flex-direction: column;
+}
+
+.pie-body--stale {
+  opacity: 0.5;
+}
+
+.pie-canvas {
+  position: relative;
+  flex: none;
+}
+
+.pie-label-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pie-center {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.pie-center-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.pie-center-value {
+  color: var(--ink);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-weight: 700;
+}
+
+.pie-legend {
+  display: grid;
+  flex: 0 0 300px;
+  width: 300px;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pie-body--stacked .pie-legend {
+  flex: none;
+  width: 100%;
+  max-width: 460px;
+}
+
+.pie-legend-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto 52px;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.pie-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.pie-legend-name {
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.pie-legend-amount {
+  color: var(--ink);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-weight: 700;
+  text-align: right;
+}
+
+.pie-legend-share {
+  text-align: right;
+  color: var(--muted);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .month-stepper {
+    width: 100%;
+  }
+
+  .month-stepper-select {
+    flex: 1;
+    min-width: 0;
+  }
+}

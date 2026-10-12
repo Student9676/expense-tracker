@@ -1,5 +1,6 @@
 import type {
   CategoryRulesData,
+  CategorySummaryResponse,
   CustomExpenseInput,
   ExpenseItem,
   ExpensesResponse,
@@ -43,6 +44,27 @@ export function getExpenses(
   if (month) params.set('month', month)
   params.set('expenses_only', String(expensesOnly))
   return request<ExpensesResponse>(`/api/expenses?${params.toString()}`)
+}
+
+export interface CategorySummaryOptions {
+  month?: string
+  expensesOnly?: boolean
+  search?: string
+  /** Category filter; omit or pass 'ALL' for every category. */
+  category?: string
+}
+
+/** Expense totals grouped by category, computed on the server using the table's filters. */
+export function getCategorySummary(
+  options: CategorySummaryOptions = {},
+): Promise<CategorySummaryResponse> {
+  const { month, expensesOnly = true, search, category } = options
+  const params = new URLSearchParams()
+  if (month) params.set('month', month)
+  params.set('expenses_only', String(expensesOnly))
+  if (search && search.trim()) params.set('search', search.trim())
+  if (category && category !== 'ALL') params.set('category', category)
+  return request<CategorySummaryResponse>(`/api/expenses/category_summary?${params.toString()}`)
 }
 
 export function toggleTransactionExclusion(

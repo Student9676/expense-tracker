@@ -439,6 +439,12 @@ async def import_category_rules(request: Request):
     status_code=200,
 )
 def fetch_expenses(month: str | None = None, expenses_only: bool = True):
+    expenses, available_months = build_expense_rows(month, expenses_only)
+    return summarize_expenses(expenses, available_months, month)
+
+
+def build_expense_rows(month: str | None, expenses_only: bool):
+    """Build the classified expense rows (bank + custom) shared by the expense endpoints."""
     rules = load_category_rules()
     exclusions = get_transaction_exclusions(month)
     transactions = get_saved_transactions(month=month, expenses_only=expenses_only)
@@ -524,7 +530,10 @@ def fetch_expenses(month: str | None = None, expenses_only: bool = True):
         key=lambda item: (item.get("date") or "0000-00-00", item.get("name") or ""),
         reverse=True,
     )
+    return expenses, available_months
 
+
+def summarize_expenses(expenses, available_months, month: str | None):
     # Excluded transactions are omitted from total_expenses calculation
     total_expenses = sum(
         e["amount"] for e in expenses if not e["excluded"] and e["amount"] is not None
@@ -546,6 +555,112 @@ def fetch_expenses(month: str | None = None, expenses_only: bool = True):
         "excluded_count": excluded_count,
         "month": month or "all",
         "available_months": available_months,
+    }
+
+
+PIE_OTHER_LABEL = "Other"
+
+
+@app.get(
+    "/api/expenses/category_summary",
+    summary="Get expense totals grouped by category",
+    description=(
+        "Group the same rows the expenses table shows by category. Excluded rows are left out of "
+        "the totals. Returns every category (for the totals table) and pie slices (positive totals "
+        "only, with the smallest slices merged into 'Other')."
+    ),
+    status_code=200,
+)
+def fetch_category_summary(
+    month: str | None = None,
+    expenses_only: bool = True,
+    search: str | None = None,
+    category: str | None = None,
+    max_slices: int = 7,
+):
+    rows, _ = build_expense_rows(month, expenses_only)
+
+    # Same filters the expenses table applies in the browser.
+    query = (search or "").strip().lower()
+    wanted_category = (category or "").strip()
+    filtered = []
+    for e in rows:
+        if query:
+            name_hit = query in (e.get("name") or "").lower()
+            merchant_hit = query in (e.get("merchant_name") or "").lower()
+            if not (name_hit or merchant_hit):
+                continue
+        if wanted_category and wanted_category.upper() != "ALL" and e["category"] != wanted_category:
+            continue
+        filtered.append(e)
+
+    excluded_count = sum(1 for e in filtered if e["excluded"])
+    included = [e for e in filtered if not e["excluded"] and e["amount"] is not None]
+
+    # Sum in integer cents so totals don't pick up floating point drift.
+    groups: dict[str, dict] = {}
+    for e in included:
+        g = groups.setdefault(e["category"], {"count": 0, "cents": 0})
+        g["count"] += 1
+        g["cents"] += int(round(e["amount"] * 100))
+
+    grand_cents = sum(g["cents"] for g in groups.values())
+
+    def pct(part_cents: int, whole_cents: int) -> float:
+        return round(part_cents / whole_cents * 100, 1) if whole_cents else 0.0
+
+    ordered = sorted(groups.items(), key=lambda kv: (-kv[1]["cents"], kv[0]))
+    categories = [
+        {
+            "category": name,
+            "count": g["count"],
+            "total": g["cents"] / 100,
+            "share": pct(g["cents"], grand_cents),
+        }
+        for name, g in ordered
+    ]
+
+    # Pie: positive totals only (credits can't be a slice).
+    positives = [(name, g) for name, g in ordered if g["cents"] > 0]
+    positive_cents = sum(g["cents"] for _, g in positives)
+    max_slices = max(1, max_slices)
+    keep, rest = positives[:max_slices], positives[max_slices:]
+    # Merging a single leftover into "Other" would only hide its name.
+    if len(rest) == 1:
+        keep, rest = positives, []
+
+    pie = [
+        {
+            "category": name,
+            "total": g["cents"] / 100,
+            "count": g["count"],
+            "share": pct(g["cents"], positive_cents),
+            "is_other": False,
+            "merged_categories": 0,
+        }
+        for name, g in keep
+    ]
+    if rest:
+        other_cents = sum(g["cents"] for _, g in rest)
+        pie.append(
+            {
+                "category": PIE_OTHER_LABEL,
+                "total": other_cents / 100,
+                "count": sum(g["count"] for _, g in rest),
+                "share": pct(other_cents, positive_cents),
+                "is_other": True,
+                "merged_categories": len(rest),
+            }
+        )
+
+    return {
+        "month": month or "all",
+        "categories": categories,
+        "pie": pie,
+        "total": grand_cents / 100,
+        "positive_total": positive_cents / 100,
+        "count": len(included),
+        "excluded_count": excluded_count,
     }
 
 
