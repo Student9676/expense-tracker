@@ -1,6 +1,7 @@
+import calendar
+import datetime
 import json
 import os
-import datetime
 
 import plaid
 import uvicorn
@@ -26,12 +27,19 @@ from database import (
     save_monthly_income,
     get_saved_transactions,
     get_transaction_months,
+    get_transaction_exclusions,
+    set_transaction_exclusion,
+    get_custom_expenses,
+    add_custom_expense,
+    delete_custom_expense,
+    update_custom_expense,
 )
 from server.classifier import (
     classify_transaction,
     load_category_rules,
     save_category_rules,
     get_rules_file_path,
+    format_recurring_date,
 )
 
 load_dotenv()
@@ -423,46 +431,264 @@ async def import_category_rules(request: Request):
 # --- Expenses Endpoints ------------------------------------------------------
 
 
+
 @app.get(
     "/api/expenses",
     summary="Get classified expenses",
-    description="Retrieve expenses from the database classified by category rules, with totals.",
+    description="Retrieve expenses from the database classified by category rules, with totals and exclusions.",
     status_code=200,
 )
 def fetch_expenses(month: str | None = None, expenses_only: bool = True):
     rules = load_category_rules()
+    exclusions = get_transaction_exclusions(month)
     transactions = get_saved_transactions(month=month, expenses_only=expenses_only)
+    custom_txs = get_custom_expenses(month=month)
+    available_months = get_transaction_months()
+
     expenses = []
     for tx in transactions:
         name = tx.get("name") or tx.get("merchant_name") or "Unnamed Transaction"
         category = classify_transaction(name, rules)
+        tx_id = tx["transaction_id"]
         expenses.append({
-            "transaction_id": tx["transaction_id"],
+            "transaction_id": tx_id,
             "name": name,
             "merchant_name": tx.get("merchant_name"),
             "amount": tx["amount"],
             "amount_cents": tx.get("amount_cents"),
             "date": tx.get("date"),
             "category": category,
+            "excluded": tx_id in exclusions,
+            "is_custom": False,
+            "is_recurring": False,
             "pfc_primary": tx.get("pfc_primary"),
             "pfc_detailed": tx.get("pfc_detailed"),
         })
 
-    total = sum(e["amount"] for e in expenses if e["amount"] is not None)
-    available_months = get_transaction_months()
+    is_all_months = not month or month.lower() == "all"
+    for cx in custom_txs:
+        cx_id = cx["id"]
+        cat = cx.get("category") or classify_transaction(cx["name"], rules)
+        is_rec = bool(cx.get("is_recurring", False))
+
+        if is_rec and is_all_months:
+            # In All Months view, recurring expenses appear once per available month with each month's date
+            months_to_gen = (
+                available_months
+                if available_months
+                else [cx.get("date", "")[:7] or datetime.date.today().strftime("%Y-%m")]
+            )
+            for m in months_to_gen:
+                cx_date = format_recurring_date(cx.get("date"), m)
+                item_tx_id = f"{cx_id}::{m}"
+                is_excl = (cx_id in exclusions and f"{cx_id}::{m}" in exclusions) or (item_tx_id in exclusions)
+                expenses.append({
+                    "transaction_id": item_tx_id,
+                    "custom_id": cx_id,
+                    "name": cx["name"],
+                    "merchant_name": None,
+                    "amount": cx["amount"],
+                    "amount_cents": int(round(cx["amount"] * 100)),
+                    "date": cx_date,
+                    "category": cat,
+                    "excluded": is_excl,
+                    "is_custom": True,
+                    "is_recurring": True,
+                    "pfc_primary": "CUSTOM",
+                    "pfc_detailed": "CUSTOM_EXPENSE",
+                })
+        else:
+            if is_rec and not is_all_months and month:
+                cx_date = format_recurring_date(cx.get("date"), month)
+            else:
+                cx_date = cx.get("date")
+
+            expenses.append({
+                "transaction_id": cx_id,
+                "custom_id": cx_id,
+                "name": cx["name"],
+                "merchant_name": None,
+                "amount": cx["amount"],
+                "amount_cents": int(round(cx["amount"] * 100)),
+                "date": cx_date,
+                "category": cat,
+                "excluded": cx_id in exclusions,
+                "is_custom": True,
+                "is_recurring": is_rec,
+                "pfc_primary": "CUSTOM",
+                "pfc_detailed": "CUSTOM_EXPENSE",
+            })
+
+    # Sort newest date first, then by name
+    expenses.sort(
+        key=lambda item: (item.get("date") or "0000-00-00", item.get("name") or ""),
+        reverse=True,
+    )
+
+    # Excluded transactions are omitted from total_expenses calculation
+    total_expenses = sum(
+        e["amount"] for e in expenses if not e["excluded"] and e["amount"] is not None
+    )
+    total_all = sum(e["amount"] for e in expenses if e["amount"] is not None)
+    excluded_count = sum(1 for e in expenses if e["excluded"])
+
     income_data = get_monthly_income(month)
     income = income_data["income"]
-    leftover = round(income - total, 2)
+    leftover = round(income - total_expenses, 2)
 
     return {
         "expenses": expenses,
-        "total_expenses": round(total, 2),
+        "total_expenses": round(total_expenses, 2),
+        "total_all": round(total_all, 2),
         "income": income,
         "leftover": leftover,
         "count": len(expenses),
+        "excluded_count": excluded_count,
         "month": month or "all",
         "available_months": available_months,
     }
+
+
+@app.post(
+    "/api/expenses/toggle_exclusion",
+    summary="Toggle transaction exclusion for a month",
+    description="Autosave whether a transaction is excluded from a month's calculations.",
+    status_code=200,
+)
+async def toggle_exclusion(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    transaction_id = data.get("transaction_id")
+    month = data.get("month")
+    excluded = bool(data.get("excluded", True))
+    if not transaction_id:
+        raise HTTPException(status_code=400, detail="transaction_id is required")
+
+    # If the transaction_id was scoped as custom_id::month (e.g. from All Months view)
+    if "::" in transaction_id:
+        real_tx_id, scoped_month = transaction_id.split("::", 1)
+        target_month = scoped_month if (not month or month.lower() == "all") else month
+        set_transaction_exclusion(real_tx_id, target_month, excluded)
+        return {
+            "status": "saved",
+            "transaction_id": transaction_id,
+            "month": target_month,
+            "excluded": excluded,
+        }
+
+    set_transaction_exclusion(transaction_id, month, excluded)
+    return {
+        "status": "saved",
+        "transaction_id": transaction_id,
+        "month": month,
+        "excluded": excluded,
+    }
+
+
+
+@app.post(
+    "/api/custom_expenses",
+    summary="Add custom expense",
+    description="Add a manual custom expense, optionally recurring each month.",
+    status_code=200,
+)
+async def create_custom_expense(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    name = data.get("name")
+    if not name or not str(name).strip():
+        raise HTTPException(status_code=400, detail="Expense name is required")
+    try:
+        amount = float(data.get("amount", 0))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid amount")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than zero")
+
+    category = data.get("category")
+    date_str = data.get("date")
+    month = data.get("month")
+    is_recurring = bool(data.get("is_recurring", False))
+
+    item = add_custom_expense(
+        name=name,
+        amount=amount,
+        category=category,
+        date_str=date_str,
+        month=month,
+        is_recurring=is_recurring,
+    )
+    return item
+
+
+@app.delete(
+    "/api/custom_expenses/{custom_id}",
+    summary="Delete custom expense",
+    description="Delete a custom expense by its ID.",
+    status_code=200,
+)
+def remove_custom_expense(custom_id: str):
+    deleted = delete_custom_expense(custom_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Custom expense not found")
+    return {"status": "deleted", "id": custom_id}
+
+
+@app.put(
+    "/api/custom_expenses/{custom_id}",
+    summary="Update custom expense",
+    description="Update a custom expense by its ID.",
+    status_code=200,
+)
+async def edit_custom_expense(custom_id: str, request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    updated = update_custom_expense(
+        custom_id=custom_id,
+        name=data.get("name"),
+        amount=float(data["amount"]) if "amount" in data else None,
+        category=data.get("category"),
+        date_str=data.get("date"),
+        is_recurring=bool(data["is_recurring"]) if "is_recurring" in data else None,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Custom expense not found")
+    return updated
+
+
+@app.post(
+    "/api/refresh_transactions",
+    summary="Refresh past 3 months transactions",
+    description="Fetch transactions for the past 3 months from Plaid and save them to the database.",
+    status_code=200,
+)
+def refresh_past_3_months(
+    access_token: str = Depends(read_access_token),
+    plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
+):
+    today = datetime.date.today()
+    # 90 days covers the past 3 months
+    start_date = today - datetime.timedelta(days=90)
+    end_date = today
+
+    transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
+    save_result = save_transactions(jsonable_encoder(transactions), start_date, end_date)
+    return {
+        "status": "success",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "save_result": save_result,
+    }
+
 
 
 

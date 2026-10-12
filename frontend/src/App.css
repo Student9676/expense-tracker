@@ -439,6 +439,9 @@ textarea {
 }
 
 .metric-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.8rem;
   color: var(--muted);
   margin-top: 4px;
@@ -543,6 +546,9 @@ select:focus {
 }
 
 .rules-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--paper);
   border: 1px solid var(--line);
   padding: 4px 10px;
@@ -559,10 +565,14 @@ select:focus {
 
 .rules-bar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
 .rules-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 38px;
   padding: 0 16px;
   font-size: 0.8rem;
@@ -842,6 +852,10 @@ select:focus {
 }
 
 .modal-close-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
   background: transparent;
   border: none;
   color: var(--muted);
@@ -903,6 +917,7 @@ select:focus {
 }
 
 .action-btn {
+  gap: 6px;
   min-height: 34px;
   padding: 0 12px;
   font-size: 0.75rem;
@@ -979,6 +994,9 @@ select:focus {
 }
 
 .add-rule-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 46px;
   background: var(--accent);
   border-color: var(--accent);
@@ -1016,26 +1034,15 @@ select:focus {
   vertical-align: middle;
 }
 
+.rules-table td:last-child {
+  text-align: center;
+}
+
 .rules-table input,
 .rules-table select {
   min-height: 36px;
   font-size: 0.82rem;
   padding: 0 8px;
-}
-
-.delete-rule-btn {
-  min-height: 36px;
-  padding: 0 10px;
-  background: transparent;
-  border: 1px solid var(--line);
-  color: #b3261e;
-  cursor: pointer;
-}
-
-.delete-rule-btn:hover {
-  background: rgba(179, 38, 30, 0.1);
-  border-color: #b3261e;
-  transform: none;
 }
 
 .empty-rules-cell {
@@ -1124,4 +1131,306 @@ select:focus {
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   Transaction Exclusion Checkboxes & Row States
+   ========================================================================== */
+
+.col-checkbox {
+  width: 54px;
+  text-align: center;
+}
+
+.expenses-table th.col-checkbox {
+  text-align: center;
+}
+
+.checkbox-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.checkbox-wrap input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: auto;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.row--excluded {
+  opacity: 0.55;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.row--excluded:hover {
+  opacity: 0.85;
+}
+
+.amount-text--excluded {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.name-cell-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.badges-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 2px;
+}
+
+.badge--custom {
+  background: rgba(192, 90, 39, 0.12);
+  color: var(--orange);
+  border: 1px solid rgba(192, 90, 39, 0.3);
+}
+
+.badge--recurring {
+  background: rgba(43, 155, 106, 0.12);
+  color: var(--green);
+  border: 1px solid rgba(43, 155, 106, 0.3);
+}
+
+.badge--excluded {
+  background: rgba(101, 115, 110, 0.12);
+  color: var(--muted);
+  border: 1px solid rgba(101, 115, 110, 0.3);
+}
+
+.col-actions {
+  width: 112px;
+  text-align: center;
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Icon-only buttons: edit and delete on custom expense rows, delete in the rules table. */
+.btn-edit-item,
+.btn-delete-item,
+.delete-rule-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.btn-edit-item:hover:not(:disabled),
+.btn-delete-item:hover:not(:disabled),
+.delete-rule-btn:hover:not(:disabled) {
+  background: var(--wash);
+  border-color: var(--line);
+  color: var(--ink);
+  transform: none;
+}
+
+.btn-delete-item:hover:not(:disabled),
+.delete-rule-btn:hover:not(:disabled) {
+  background: rgba(179, 38, 30, 0.08);
+  border-color: rgba(179, 38, 30, 0.35);
+  color: #b3261e;
+}
+
+/* ==========================================================================
+   Custom Expense Modal & Toolbar Actions
+   ========================================================================== */
+
+.table-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.expenses-top-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-add-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.82rem;
+  min-height: 40px;
+  padding: 0 18px;
+}
+
+.btn-add-custom:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.rules-action-btn--refresh {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
+}
+
+.rules-action-btn--refresh:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.autosave-indicator {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--green);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  margin-bottom: 20px;
+  border: 1px solid;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.banner--success {
+  background: rgba(43, 155, 106, 0.1);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.banner--error {
+  background: rgba(179, 38, 30, 0.1);
+  border-color: #b3261e;
+  color: #b3261e;
+}
+
+.expenses-toolbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.excluded-summary-pill {
+  background: rgba(101, 115, 110, 0.1);
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tfoot-row--subtle {
+  background: rgba(0, 0, 0, 0.02);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.modal-window--compact {
+  width: min(560px, 100%);
+}
+
+.custom-expense-form .form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.recurring-checkbox-row {
+  background: var(--wash);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+  margin-top: 14px;
+}
+
+.recurring-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.recurring-label input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  min-height: auto;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.recurring-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recurring-text strong {
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.recurring-text small {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Icons
+   ========================================================================== */
+
+button svg,
+.rules-badge svg,
+.metric-sub svg,
+.banner svg {
+  flex-shrink: 0;
+}
+
+.icon-spin {
+  animation: icon-spin 1s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-spin {
+    animation: none;
+  }
+}
+
 

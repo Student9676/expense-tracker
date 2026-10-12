@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent } from 'react'
+import { LuDownload, LuPlus, LuTrash2, LuUpload, LuX } from 'react-icons/lu'
 import type { CategoryRule, CategoryRulesData } from '../types/budget'
 import { downloadCategoryRulesFile, saveCategoryRules } from '../api/budget'
 
@@ -200,7 +201,7 @@ export function CategoryRulesModal({
             onClick={onClose}
             aria-label="Close modal"
           >
-            ✕
+            <LuX size={20} aria-hidden="true" />
           </button>
         </header>
 
@@ -238,10 +239,12 @@ export function CategoryRulesModal({
               onClick={handleExport}
               title="Download category_rules.json to your computer"
             >
-              ↓ Export File
+              <LuDownload size={14} aria-hidden="true" />
+              Export File
             </button>
             <label className="action-btn action-btn--file">
-              ↑ Import File
+              <LuUpload size={14} aria-hidden="true" />
+              Import File
               <input
                 type="file"
                 accept=".json,application/json"
@@ -311,7 +314,8 @@ export function CategoryRulesModal({
                       onClick={handleAddRule}
                       disabled={!newPattern.trim() || !newCategory.trim()}
                     >
-                      + Add Rule
+                      <LuPlus size={16} aria-hidden="true" />
+                      Add Rule
                     </button>
                   </div>
                 </div>
@@ -373,8 +377,11 @@ export function CategoryRulesModal({
                             className="delete-rule-btn"
                             onClick={() => handleDeleteRule(idx)}
                             title="Delete rule"
+                            aria-label={
+                              rule.pattern ? `Delete rule "${rule.pattern}"` : 'Delete rule'
+                            }
                           >
-                            🗑
+                            <LuTrash2 size={16} aria-hidden="true" />
                           </button>
                         </td>
                       </tr>

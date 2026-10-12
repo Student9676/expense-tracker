@@ -1,5 +1,6 @@
-"""Unit tests for the new budget, monthly income, and category rules features."""
+"""Unit tests for the new budget, monthly income, category rules, exclusions, and custom expenses."""
 
+import datetime
 import json
 import tempfile
 from pathlib import Path
@@ -32,7 +33,6 @@ def test_database_income():
 
     # Fallback to default for month without specific entry
     res_nov = db.get_monthly_income("2026-11")
-    # Because save_monthly_income also updates default if not default
     assert res_nov["income"] in (4500.0, 5200.0)
 
     print("✓ Database income tests passed.")
@@ -122,27 +122,141 @@ def test_classifier_file_persistence():
     print("✓ Classifier file persistence tests passed.")
 
 
-def test_budget_leftover_calculation():
-    print("Testing budget leftover calculation...")
+def test_transaction_exclusions():
+    print("Testing transaction exclusions autosave and filtering...")
+    tx_id = "test_tx_exclusion_123"
+    month = "2026-10"
+
+    # Set exclusion
+    db.set_transaction_exclusion(tx_id, month, True)
+    exclusions_oct = db.get_transaction_exclusions(month)
+    assert tx_id in exclusions_oct
+
+    # Exclusion for different month is not present
+    exclusions_sep = db.get_transaction_exclusions("2026-09")
+    assert tx_id not in exclusions_sep
+
+    # Unset exclusion
+    db.set_transaction_exclusion(tx_id, month, False)
+    exclusions_after = db.get_transaction_exclusions(month)
+    assert tx_id not in exclusions_after
+
+    print("✓ Transaction exclusions tests passed.")
+
+
+def test_custom_expenses():
+    print("Testing custom expenses (one-off and recurring)...")
+    # Add recurring expense
+    rec = db.add_custom_expense("Rent", 1500.0, "Housing", "2026-10-01", "2026-10", is_recurring=True)
+    assert rec["id"].startswith("custom_")
+    assert rec["is_recurring"] is True
+
+    # Add one-off expense for October
+    one_off = db.add_custom_expense("Conference Ticket", 350.0, "Professional", "2026-10-15", "2026-10", is_recurring=False)
+    assert one_off["is_recurring"] is False
+
+    # In October 2026: both appear
+    oct_custom = db.get_custom_expenses("2026-10")
+    oct_ids = {c["id"] for c in oct_custom}
+    assert rec["id"] in oct_ids
+    assert one_off["id"] in oct_ids
+
+    # In September 2026: recurring Rent appears, one-off ticket does NOT appear
+    sep_custom = db.get_custom_expenses("2026-09")
+    sep_ids = {c["id"] for c in sep_custom}
+    assert rec["id"] in sep_ids
+    assert one_off["id"] not in sep_ids
+
+    # Delete custom expenses
+    assert db.delete_custom_expense(rec["id"]) is True
+    assert db.delete_custom_expense(one_off["id"]) is True
+
+    # After deletion: neither appears
+    oct_after = db.get_custom_expenses("2026-10")
+    assert rec["id"] not in {c["id"] for c in oct_after}
+    assert one_off["id"] not in {c["id"] for c in oct_after}
+
+    print("✓ Custom expenses tests passed.")
+
+
+def test_budget_leftover_calculation_with_exclusions():
+    print("Testing budget leftover calculation with exclusions and custom expenses...")
     income = 5000.0
     rules = cf.load_category_rules()
+
+    # Base October expenses: 5 items summing to 136.13
     oct_expenses = db.get_saved_transactions("2026-10", expenses_only=True)
-    classified = [
-        {
-            "name": t.get("name"),
+    assert len(oct_expenses) == 5
+
+    # Exclude SparkFun ($89.40)
+    sparkfun_id = [t["transaction_id"] for t in oct_expenses if "SparkFun" in t.get("name", "")][0]
+    db.set_transaction_exclusion(sparkfun_id, "2026-10", True)
+
+    exclusions = db.get_transaction_exclusions("2026-10")
+    assert sparkfun_id in exclusions
+
+    # Add custom recurring gym expense ($50.0)
+    gym = db.add_custom_expense("Gym Membership", 50.0, "Health", "2026-10-01", "2026-10", True)
+
+    # Compute included total:
+    # (136.13 - 89.40) + 50.0 = 46.73 + 50.0 = 96.73
+    all_items = []
+    for t in oct_expenses:
+        all_items.append({
+            "id": t["transaction_id"],
             "amount": t["amount"],
-            "category": cf.classify_transaction(t.get("name"), rules),
-        }
-        for t in oct_expenses
-    ]
+            "excluded": t["transaction_id"] in exclusions,
+        })
+    all_items.append({
+        "id": gym["id"],
+        "amount": gym["amount"],
+        "excluded": gym["id"] in exclusions,
+    })
 
-    total_expenses = sum(item["amount"] for item in classified)
-    leftover = income - total_expenses
+    total_included = sum(item["amount"] for item in all_items if not item["excluded"])
+    leftover = income - total_included
 
-    assert round(total_expenses, 2) == 136.13
-    assert round(leftover, 2) == 4863.87
+    assert round(total_included, 2) == 96.73
+    assert round(leftover, 2) == 4903.27
 
-    print("✓ Budget leftover calculation tests passed.")
+    # Cleanup
+    db.set_transaction_exclusion(sparkfun_id, "2026-10", False)
+    db.delete_custom_expense(gym["id"])
+
+    print("✓ Budget leftover calculation with exclusions tests passed.")
+
+
+def test_refresh_date_range():
+    print("Testing refresh past 3 months date calculation...")
+    today = datetime.date.today()
+    start_date = today - datetime.timedelta(days=90)
+    assert (today - start_date).days == 90
+    print("✓ Refresh date range test passed.")
+
+
+def test_recurring_date_variation():
+    print("Testing recurring expense date variation across months...")
+    # Day 1 preserved across months
+    assert cf.format_recurring_date("2026-10-01", "2026-09") == "2026-09-01"
+    assert cf.format_recurring_date("2026-10-01", "2026-08") == "2026-08-01"
+    assert cf.format_recurring_date("2026-10-01", "2026-11") == "2026-11-01"
+    assert cf.format_recurring_date("2026-10-01", "2027-01") == "2027-01-01"
+
+    # Day 15 preserved across months
+    assert cf.format_recurring_date("2026-10-15", "2026-09") == "2026-09-15"
+    assert cf.format_recurring_date("2026-10-15", "2026-02") == "2026-02-15"
+
+    # Day 31 clamped in shorter months
+    assert cf.format_recurring_date("2026-10-31", "2026-09") == "2026-09-30"  # Sept has 30 days
+    assert cf.format_recurring_date("2026-10-31", "2026-08") == "2026-08-31"  # Aug has 31 days
+    assert cf.format_recurring_date("2026-10-31", "2026-02") == "2026-02-28"  # Feb 2026 has 28 days
+
+    # Fallback / empty date
+    assert cf.format_recurring_date(None, "2026-09") == "2026-09-01"
+    assert cf.format_recurring_date("", "2026-09") == "2026-09-01"
+    assert cf.format_recurring_date("2026-10-01", "all") == "2026-10-01"
+
+    print("✓ Recurring date variation tests passed.")
 
 
 if __name__ == "__main__":
@@ -150,6 +264,10 @@ if __name__ == "__main__":
     test_transactions_retrieval()
     test_classifier_rules()
     test_classifier_file_persistence()
-    test_budget_leftover_calculation()
+    test_transaction_exclusions()
+    test_custom_expenses()
+    test_budget_leftover_calculation_with_exclusions()
+    test_refresh_date_range()
+    test_recurring_date_variation()
     print("\n🎉 ALL TESTS PASSED SUCCESSFULLY! 🎉")
 

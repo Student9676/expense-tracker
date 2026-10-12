@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import logging
 import os
@@ -147,4 +148,33 @@ def classify_transaction(name: str | None, rules_data: dict[str, Any] | None = N
             continue
 
     return default_category
+
+
+def format_recurring_date(original_date: str | None, target_month: str | None) -> str:
+    """Format the recurring date for a given target month (YYYY-MM).
+
+    Preserves the day of month from original_date (e.g. 1st, 15th),
+    clamping to the target month's maximum days if needed.
+    For example: oct 1st (2026-10-01) in sept (2026-09) becomes 2026-09-01.
+    """
+    if not target_month or target_month.lower() == "all":
+        return original_date or ""
+
+    orig_day = 1
+    if original_date:
+        parts = original_date.split("-")
+        if len(parts) == 3:
+            try:
+                orig_day = int(parts[2])
+            except ValueError:
+                orig_day = 1
+
+    try:
+        year, month_num = map(int, target_month.split("-"))
+        max_days = calendar.monthrange(year, month_num)[1]
+        clamped_day = min(max(1, orig_day), max_days)
+        return f"{year:04d}-{month_num:02d}-{clamped_day:02d}"
+    except Exception:
+        return f"{target_month}-{orig_day:02d}"
+
 

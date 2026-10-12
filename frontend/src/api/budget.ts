@@ -1,4 +1,11 @@
-import type { CategoryRulesData, ExpensesResponse, IncomeResponse } from '../types/budget'
+import type {
+  CategoryRulesData,
+  CustomExpenseInput,
+  ExpenseItem,
+  ExpensesResponse,
+  IncomeResponse,
+  RefreshTransactionsResult,
+} from '../types/budget'
 import { request } from './client'
 
 export function getIncome(month?: string): Promise<IncomeResponse> {
@@ -38,6 +45,49 @@ export function getExpenses(
   return request<ExpensesResponse>(`/api/expenses?${params.toString()}`)
 }
 
+export function toggleTransactionExclusion(
+  transactionId: string,
+  month: string | null,
+  excluded: boolean,
+): Promise<{ status: string; transaction_id: string; month: string | null; excluded: boolean }> {
+  return request('/api/expenses/toggle_exclusion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction_id: transactionId, month, excluded }),
+  })
+}
+
+export function createCustomExpense(data: CustomExpenseInput): Promise<ExpenseItem> {
+  return request<ExpenseItem>('/api/custom_expenses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export function deleteCustomExpense(customId: string): Promise<{ status: string; id: string }> {
+  return request<{ status: string; id: string }>(`/api/custom_expenses/${encodeURIComponent(customId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function updateCustomExpense(
+  customId: string,
+  data: Partial<CustomExpenseInput>,
+): Promise<ExpenseItem> {
+  return request<ExpenseItem>(`/api/custom_expenses/${encodeURIComponent(customId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export function refreshPast3Months(): Promise<RefreshTransactionsResult> {
+  return request<RefreshTransactionsResult>('/api/refresh_transactions', {
+    method: 'POST',
+  })
+}
+
 export function downloadCategoryRulesFile(rulesData?: CategoryRulesData): void {
   // If we have the current rules in memory, download as Blob to ensure instant export
   if (rulesData) {
@@ -55,4 +105,3 @@ export function downloadCategoryRulesFile(rulesData?: CategoryRulesData): void {
     window.location.href = '/backend/api/category_rules/export'
   }
 }
-

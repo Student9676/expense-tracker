@@ -29,6 +29,7 @@ from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterator
+import uuid
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (
@@ -104,6 +105,25 @@ CREATE TABLE IF NOT EXISTS transaction_counterparties (
 CREATE TABLE IF NOT EXISTS monthly_income (
     month            TEXT PRIMARY KEY,
     amount           REAL NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS transaction_exclusions (
+    transaction_id   TEXT NOT NULL,
+    month            TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    PRIMARY KEY (transaction_id, month)
+);
+
+CREATE TABLE IF NOT EXISTS custom_expenses (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    amount           REAL NOT NULL,
+    category         TEXT,
+    date             TEXT,
+    month            TEXT,
+    is_recurring     INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );
 """
@@ -523,11 +543,196 @@ def get_saved_transactions(
 
 
 def get_transaction_months() -> list[str]:
-    """Return all distinct YYYY-MM months with transactions in descending order."""
+    """Return all distinct YYYY-MM months with transactions or custom expenses in descending order."""
     with connect() as connection:
-        rows = connection.execute(
+        rows_tx = connection.execute(
             "SELECT DISTINCT strftime('%Y-%m', date) as m FROM transactions "
-            "WHERE date IS NOT NULL ORDER BY m DESC"
+            "WHERE date IS NOT NULL"
         ).fetchall()
-        return [row["m"] for row in rows if row["m"]]
+        rows_custom = connection.execute(
+            "SELECT DISTINCT month as m FROM custom_expenses "
+            "WHERE month IS NOT NULL AND month != ''"
+        ).fetchall()
+        months_set = {r["m"] for r in rows_tx if r["m"]} | {r["m"] for r in rows_custom if r["m"]}
+        return sorted(months_set, reverse=True)
+
+
+# --- Transaction Exclusions --------------------------------------------------
+
+
+def get_transaction_exclusions(month: str | None = None) -> set[str]:
+    """Return set of excluded transaction IDs for a specific month (or all months)."""
+    clean_m = clean_text(month)
+    with connect() as connection:
+        if clean_m and clean_m.lower() != "all":
+            rows = connection.execute(
+                "SELECT transaction_id FROM transaction_exclusions WHERE month = ? OR month = 'all'",
+                (clean_m,),
+            ).fetchall()
+            return {row["transaction_id"] for row in rows}
+        else:
+            rows = connection.execute(
+                "SELECT transaction_id, month FROM transaction_exclusions"
+            ).fetchall()
+            result = set()
+            for r in rows:
+                if r["month"] == "all":
+                    result.add(r["transaction_id"])
+                result.add(f"{r['transaction_id']}::{r['month']}")
+            return result
+
+
+
+def set_transaction_exclusion(
+    transaction_id: str, month: str | None, excluded: bool
+) -> bool:
+    """Set or remove exclusion for a transaction in a specific month."""
+    clean_tx = clean_text(transaction_id)
+    if not clean_tx:
+        return False
+    clean_m = clean_text(month) or "all"
+    now = utc_now()
+    with connect() as connection:
+        if excluded:
+            connection.execute(
+                "INSERT OR IGNORE INTO transaction_exclusions (transaction_id, month, created_at) "
+                "VALUES (?, ?, ?)",
+                (clean_tx, clean_m, now),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM transaction_exclusions WHERE transaction_id = ? AND (month = ? OR month = 'all')",
+                (clean_tx, clean_m),
+            )
+    return True
+
+
+# --- Custom Expenses ---------------------------------------------------------
+
+
+def get_custom_expenses(month: str | None = None) -> list[dict[str, Any]]:
+    """Return custom expenses for a given month or recurring ones."""
+    clean_m = clean_text(month)
+    query = (
+        "SELECT id, name, amount, category, date, month, is_recurring, created_at, updated_at "
+        "FROM custom_expenses"
+    )
+    params: list[Any] = []
+    if clean_m and clean_m.lower() != "all":
+        query += " WHERE is_recurring = 1 OR month = ?"
+        params.append(clean_m)
+    query += " ORDER BY date DESC, created_at DESC"
+
+    with connect() as connection:
+        rows = connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+
+def add_custom_expense(
+    name: str,
+    amount: float,
+    category: str | None = None,
+    date_str: str | None = None,
+    month: str | None = None,
+    is_recurring: bool = False,
+) -> dict[str, Any]:
+    """Create a new custom expense."""
+    clean_n = clean_text(name)
+    if not clean_n:
+        raise ValueError("Name cannot be empty")
+    clean_amt = float(amount)
+    clean_cat = clean_text(category)
+    clean_d = clean_text(date_str)
+    clean_m = clean_text(month)
+    if not clean_m and clean_d:
+        clean_m = clean_d[:7]
+    rec_int = 1 if is_recurring else 0
+    now = utc_now()
+    item_id = f"custom_{uuid.uuid4().hex[:12]}"
+
+    with connect() as connection:
+        connection.execute(
+            "INSERT INTO custom_expenses (id, name, amount, category, date, month, is_recurring, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (item_id, clean_n, clean_amt, clean_cat, clean_d, clean_m, rec_int, now, now),
+        )
+
+    return {
+        "id": item_id,
+        "name": clean_n,
+        "amount": clean_amt,
+        "category": clean_cat,
+        "date": clean_d,
+        "month": clean_m,
+        "is_recurring": bool(rec_int),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def delete_custom_expense(custom_id: str) -> bool:
+    """Delete a custom expense by its id."""
+    clean_id = clean_text(custom_id)
+    if not clean_id:
+        return False
+    with connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM custom_expenses WHERE id = ?",
+            (clean_id,),
+        )
+        connection.execute(
+            "DELETE FROM transaction_exclusions WHERE transaction_id = ?",
+            (clean_id,),
+        )
+        return cursor.rowcount > 0
+
+
+def update_custom_expense(
+    custom_id: str,
+    name: str | None = None,
+    amount: float | None = None,
+    category: str | None = None,
+    date_str: str | None = None,
+    is_recurring: bool | None = None,
+) -> dict[str, Any] | None:
+    """Update an existing custom expense."""
+    clean_id = clean_text(custom_id)
+    if not clean_id:
+        return None
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM custom_expenses WHERE id = ?",
+            (clean_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        current = dict(row)
+        n = clean_text(name) if name is not None else current["name"]
+        a = float(amount) if amount is not None else current["amount"]
+        c = clean_text(category) if category is not None else current["category"]
+        d = clean_text(date_str) if date_str is not None else current["date"]
+        rec = (
+            (1 if is_recurring else 0)
+            if is_recurring is not None
+            else current["is_recurring"]
+        )
+        now = utc_now()
+        m = d[:7] if d else current["month"]
+
+        connection.execute(
+            "UPDATE custom_expenses SET name = ?, amount = ?, category = ?, date = ?, month = ?, is_recurring = ?, updated_at = ? WHERE id = ?",
+            (n, a, c, d, m, rec, now, clean_id),
+        )
+        return {
+            "id": clean_id,
+            "name": n,
+            "amount": a,
+            "category": c,
+            "date": d,
+            "month": m,
+            "is_recurring": bool(rec),
+            "updated_at": now,
+        }
+
 
