@@ -12,14 +12,23 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, FileResponse
 from plaid.api import plaid_api
 from plaid.model.country_code import CountryCode
+from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
+from plaid.model.item_get_request import ItemGetRequest
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
+from plaid.model.item_remove_request import ItemRemoveRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 
-from credentials import get_api_credentials, save_access_token, get_access_token
+from credentials import (
+    get_api_credentials,
+    save_access_token,
+    get_access_token,
+    get_item_access_token,
+    item_token_account,
+)
 from database import (
     init_database,
     save_transactions,
@@ -33,6 +42,9 @@ from database import (
     add_custom_expense,
     delete_custom_expense,
     update_custom_expense,
+    get_plaid_items,
+    upsert_plaid_item,
+    backfill_transaction_item_id,
 )
 from server.classifier import (
     classify_transaction,
@@ -46,14 +58,7 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Retrieve the access token once during server startup
-    try:
-        token = get_access_token(PLAID_SERVICE_NAME, PLAID_ENV)
-        app.state.access_token = token
-    except Exception as e:
-        # Handle keychain access errors gracefully
-        print(f"Keychain access failed: {e}")
-        app.state.access_token = None
+    app.state.access_tokens = {}
 
     # Create the Plaid client once during server startup
     try:
@@ -71,10 +76,17 @@ async def lifespan(app: FastAPI):
         # Saving will fail until this is fixed, but the rest of the server still works
         print(f"Database initialization failed: {e}")
 
+    # Load every connected bank's access token (needs the client and database above)
+    try:
+        load_bank_tokens(app)
+    except Exception as e:
+        # Handle keychain access errors gracefully
+        print(f"Keychain access failed: {e}")
+
     yield  # Server starts running
 
-    # Clear the token and client from memory on shutdown
-    app.state.access_token = None
+    # Clear the tokens and client from memory on shutdown
+    app.state.access_tokens = {}
     app.state.plaid_client = None
 
 app = FastAPI(
@@ -121,14 +133,15 @@ def create_plaid_client():
     return plaid_api.PlaidApi(plaid.ApiClient(configuration))
 
 
-def read_access_token() -> str:
-    token = getattr(app.state, "access_token", None)
-    if not token:
+def read_access_tokens() -> dict[str, str]:
+    """Access tokens for every connected bank, keyed by Plaid item_id."""
+    tokens = getattr(app.state, "access_tokens", None)
+    if not tokens:
         raise HTTPException(
             status_code=500,
-            detail="Access token is missing or could not be retrieved from the Keychain."
+            detail="No bank is connected, or its access token could not be retrieved from the Keychain."
         )
-    return token
+    return tokens
 
 
 def read_plaid_client() -> plaid_api.PlaidApi:
@@ -162,9 +175,22 @@ def health_check():
 )
 def connection_status():
     """Return whether an access token is available, without exposing it."""
+    tokens = getattr(app.state, "access_tokens", None) or {}
     return {
-        "connected": bool(getattr(app.state, "access_token", None)),
+        "connected": bool(tokens),
+        "bank_count": len(tokens),
     }
+
+
+@app.get(
+    "/api/banks",
+    summary="List connected banks",
+    description="Return every connected bank with how many transactions it has saved. Access tokens are never returned.",
+    status_code=200,
+)
+def list_banks():
+    """Return the connected banks."""
+    return {"banks": get_plaid_items()}
 
 
 @app.post(
@@ -208,8 +234,8 @@ def create_link_token(plaid_client: plaid_api.PlaidApi = Depends(read_plaid_clie
     return response.to_dict()
 
 
-def save_plaid_access_token(access_token):
-    """Save the Plaid access token in the keychain secrets manager."""
+def save_plaid_access_token(access_token, item_id):
+    """Save one bank's Plaid access token in the keychain secrets manager."""
     service_name = os.getenv("PLAID_SERVICE_NAME")
     if not service_name:
         raise ValueError("PLAID_SERVICE_NAME is not configured in .env")
@@ -218,15 +244,74 @@ def save_plaid_access_token(access_token):
         "access_token",
         access_token,
         service_name,
-        account=f"plaid_access_token_{PLAID_ENV}",
+        account=item_token_account(PLAID_ENV, item_id),
     )
+
+
+def describe_item(plaid_client, access_token) -> dict:
+    """Look up which bank an access token belongs to."""
+    item = plaid_client.item_get(ItemGetRequest(access_token=access_token)).to_dict()["item"]
+    institution_id = item.get("institution_id")
+    name = None
+    if institution_id:
+        try:
+            institution = plaid_client.institutions_get_by_id(
+                InstitutionsGetByIdRequest(
+                    institution_id=institution_id,
+                    country_codes=[CountryCode(code) for code in PLAID_COUNTRY_CODES],
+                )
+            ).to_dict()["institution"]
+            name = institution.get("name")
+        except Exception as exc:
+            print(f"Could not look up institution {institution_id}: {exc}")
+    return {
+        "item_id": item["item_id"],
+        "institution_id": institution_id,
+        "institution_name": name or "Connected bank",
+    }
+
+
+def load_bank_tokens(app) -> None:
+    """Fill app.state.access_tokens from the Keychain for every registered bank."""
+    migrate_legacy_access_token(app)
+
+    tokens = {}
+    for item in get_plaid_items():
+        token = get_item_access_token(PLAID_SERVICE_NAME, PLAID_ENV, item["item_id"])
+        if token:
+            tokens[item["item_id"]] = token
+        else:
+            print(f"No access token in the Keychain for {item['institution_name']} ({item['item_id']}).")
+    app.state.access_tokens = tokens
+
+
+def migrate_legacy_access_token(app) -> None:
+    """Adopt the single access token saved before multi-bank support as the first bank.
+
+    The old Keychain entry is left untouched. Saved transactions that have no bank yet
+    are assigned to it.
+    """
+    if get_plaid_items():
+        return
+    plaid_client = getattr(app.state, "plaid_client", None)
+    if plaid_client is None:
+        return
+    legacy_token = get_access_token(PLAID_SERVICE_NAME, PLAID_ENV)
+    if not legacy_token:
+        return
+
+    info = describe_item(plaid_client, legacy_token)
+    save_plaid_access_token(legacy_token, info["item_id"])
+    upsert_plaid_item(info["item_id"], info["institution_id"], info["institution_name"])
+    moved = backfill_transaction_item_id(info["item_id"])
+    print(f"Migrated existing connection to {info['institution_name']} ({moved} transactions assigned).")
 
 
 # The client sends the public token after Plaid Link completes.
 @app.post(
     "/api/set_access_token",
     summary="Exchange a Plaid public token",
-    description="Exchange the Link public token and securely save the access token.",
+    description="Exchange the Link public token, securely save the access token and add the bank to the connected banks. Connecting another bank adds to the existing ones.",
     status_code=200,
 )
 async def set_access_token(request: Request, plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client)):
@@ -242,11 +327,50 @@ async def set_access_token(request: Request, plaid_client: plaid_api.PlaidApi = 
 
     exchange_request = ItemPublicTokenExchangeRequest(public_token=public_token)
     response = plaid_client.item_public_token_exchange(exchange_request)
-    save_plaid_access_token(response["access_token"])
-    app.state.access_token = response["access_token"]
+    access_token = response["access_token"]
+    info = describe_item(plaid_client, access_token)
+
+    # Linking the same bank twice would create a second item and duplicate every transaction.
+    duplicate = next(
+        (
+            item
+            for item in get_plaid_items()
+            if info["institution_id"]
+            and item["institution_id"] == info["institution_id"]
+            and item["item_id"] != info["item_id"]
+        ),
+        None,
+    )
+    if duplicate:
+        try:
+            plaid_client.item_remove(ItemRemoveRequest(access_token=access_token))
+        except Exception as exc:
+            print(f"Could not remove duplicate item {info['item_id']}: {exc}")
+        return JSONResponse(
+            content={"error": f"{duplicate['institution_name']} is already connected."},
+            status_code=409,
+        )
+
+    save_plaid_access_token(access_token, info["item_id"])
+    upsert_plaid_item(info["item_id"], info["institution_id"], info["institution_name"])
+    tokens = getattr(app.state, "access_tokens", None) or {}
+    tokens[info["item_id"]] = access_token
+    app.state.access_tokens = tokens
+
+    # Pull the new bank's recent history right away. Plaid can need a little while to
+    # prepare a brand-new connection, so a failure here is reported, not raised; the
+    # next refresh picks it up.
+    start_date, end_date = default_sync_window()
+    initial_sync = sync_bank(
+        plaid_client, info["item_id"], access_token, info["institution_name"], start_date, end_date
+    )[1]
+
     return {
         "status": "connected",
-        "item_id": response["item_id"],
+        "item_id": info["item_id"],
+        "institution_name": info["institution_name"],
+        "bank_count": len(tokens),
+        "initial_sync": initial_sync,
     }
 
 
@@ -287,6 +411,70 @@ def fetch_all_transactions(
     return all_transactions
 
 
+def default_sync_window() -> tuple[datetime.date, datetime.date]:
+    """The past 3 months (90 days)."""
+    today = datetime.date.today()
+    return today - datetime.timedelta(days=90), today
+
+
+def describe_sync_error(exc: Exception) -> str:
+    if isinstance(exc, plaid.ApiException):
+        info = format_error(exc)
+        return str(info.get("error_message") or info.get("error_code") or exc)
+    return str(exc)
+
+
+SYNC_COUNT_KEYS = ("fetched", "inserted", "updated", "skipped", "pending_removed")
+
+
+def sync_bank(plaid_client, item_id, access_token, institution_name, start_date, end_date):
+    """Fetch and save one bank's transactions. Never raises: failures are reported in the result.
+
+    Returns (save_result or None, bank_status).
+    """
+    bank = {"item_id": item_id, "institution_name": institution_name}
+    try:
+        transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
+        # Convert dates and datetimes to ISO strings, the same JSON the client receives.
+        result = save_transactions(
+            jsonable_encoder(transactions), start_date, end_date, item_id=item_id
+        )
+    except Exception as exc:
+        return None, {**bank, "status": "error", "error": describe_sync_error(exc)}
+    return result, {
+        **bank,
+        "status": "ok",
+        "fetched": result["fetched"],
+        "saved": result["inserted"] + result["updated"],
+    }
+
+
+def sync_all_banks(plaid_client, tokens, start_date, end_date):
+    """Sync every connected bank. One bank failing does not stop the others.
+
+    Returns (combined save_result, per-bank statuses). Raises only if every bank failed.
+    """
+    names = {item["item_id"]: item["institution_name"] for item in get_plaid_items()}
+    combined = {key: 0 for key in SYNC_COUNT_KEYS}
+    combined["total_in_database"] = 0
+    banks = []
+    for item_id, access_token in tokens.items():
+        result, bank = sync_bank(
+            plaid_client, item_id, access_token, names.get(item_id) or "Bank", start_date, end_date
+        )
+        banks.append(bank)
+        if result is None:
+            continue
+        for key in SYNC_COUNT_KEYS:
+            combined[key] += result[key]
+        combined["total_in_database"] = result["total_in_database"]
+
+    if banks and all(bank["status"] == "error" for bank in banks):
+        details = "; ".join(f"{b['institution_name']}: {b['error']}" for b in banks)
+        raise HTTPException(status_code=502, detail=f"Could not refresh any bank. {details}")
+    return combined, banks
+
+
 @app.post(
         "/get_transactions",
         summary="Get all transactions between a specified time period for the connected account",
@@ -296,11 +484,14 @@ def fetch_all_transactions(
 def get_transactions(
     start_date: datetime.date,
     end_date: datetime.date,
-    access_token: str = Depends(read_access_token),
+    tokens: dict[str, str] = Depends(read_access_tokens),
     plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
 ):
-    """Retrieve all transactions between a specified time period for the connected account using the stored access token."""
-    return fetch_all_transactions(plaid_client, access_token, start_date, end_date)
+    """Retrieve all transactions between a specified time period for every connected bank."""
+    transactions = []
+    for access_token in tokens.values():
+        transactions.extend(fetch_all_transactions(plaid_client, access_token, start_date, end_date))
+    return transactions
 
 
 @app.post(
@@ -312,13 +503,12 @@ def get_transactions(
 def store_transactions(
     start_date: datetime.date,
     end_date: datetime.date,
-    access_token: str = Depends(read_access_token),
+    tokens: dict[str, str] = Depends(read_access_tokens),
     plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
 ):
-    """Fetch transactions from Plaid and save everything returned to the database."""
-    transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
-    # Convert dates and datetimes to ISO strings, the same JSON the client receives.
-    return save_transactions(jsonable_encoder(transactions), start_date, end_date)
+    """Fetch transactions from every connected bank and save everything returned to the database."""
+    combined, banks = sync_all_banks(plaid_client, tokens, start_date, end_date)
+    return {**combined, "banks": banks}
 
 
 # --- Monthly Income Endpoints ------------------------------------------------
@@ -460,6 +650,7 @@ def build_expense_rows(month: str | None, expenses_only: bool):
             "transaction_id": tx_id,
             "name": name,
             "merchant_name": tx.get("merchant_name"),
+            "institution_name": tx.get("institution_name"),
             "amount": tx["amount"],
             "amount_cents": tx.get("amount_cents"),
             "date": tx.get("date"),
@@ -493,6 +684,7 @@ def build_expense_rows(month: str | None, expenses_only: bool):
                     "custom_id": cx_id,
                     "name": cx["name"],
                     "merchant_name": None,
+                    "institution_name": None,
                     "amount": cx["amount"],
                     "amount_cents": int(round(cx["amount"] * 100)),
                     "date": cx_date,
@@ -514,6 +706,7 @@ def build_expense_rows(month: str | None, expenses_only: bool):
                 "custom_id": cx_id,
                 "name": cx["name"],
                 "merchant_name": None,
+                "institution_name": None,
                 "amount": cx["amount"],
                 "amount_cents": int(round(cx["amount"] * 100)),
                 "date": cx_date,
@@ -787,21 +980,19 @@ async def edit_custom_expense(custom_id: str, request: Request):
     status_code=200,
 )
 def refresh_past_3_months(
-    access_token: str = Depends(read_access_token),
+    tokens: dict[str, str] = Depends(read_access_tokens),
     plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
 ):
-    today = datetime.date.today()
     # 90 days covers the past 3 months
-    start_date = today - datetime.timedelta(days=90)
-    end_date = today
+    start_date, end_date = default_sync_window()
 
-    transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
-    save_result = save_transactions(jsonable_encoder(transactions), start_date, end_date)
+    save_result, banks = sync_all_banks(plaid_client, tokens, start_date, end_date)
     return {
-        "status": "success",
+        "status": "success" if all(bank["status"] == "ok" for bank in banks) else "partial",
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "save_result": save_result,
+        "banks": banks,
     }
 
 

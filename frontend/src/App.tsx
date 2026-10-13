@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AdvancedPanel } from './components/AdvancedPanel'
 import { BudgetPage } from './components/BudgetPage'
 import { ConnectButton } from './components/ConnectButton'
+import { ConnectedBanks } from './components/ConnectedBanks'
 import { StatusIndicator } from './components/StatusIndicator'
 import { TransactionsPanel } from './components/TransactionsPanel'
 import { usePlaidConnection } from './hooks/usePlaidConnection'
@@ -107,6 +108,8 @@ function App() {
                   {errorMessage}
                 </p>
               )}
+
+              <ConnectedBanks stage={stage} busy={busy} onAddBank={connect} />
             </div>
 
             <AdvancedPanel

@@ -23,6 +23,8 @@ export interface ExpenseItem {
   is_recurring: boolean
   pfc_primary?: string | null
   pfc_detailed?: string | null
+  /** Bank the transaction came from; null for custom expenses. */
+  institution_name?: string | null
 }
 
 export interface ExpensesResponse {
@@ -64,6 +66,17 @@ export interface RefreshTransactionsResult {
     pending_removed: number
     total_in_database: number
   }
+  /** Per-bank outcome; one bank failing does not stop the others. */
+  banks?: BankSyncStatus[]
+}
+
+export interface BankSyncStatus {
+  item_id: string
+  institution_name: string
+  status: 'ok' | 'error'
+  fetched?: number
+  saved?: number
+  error?: string
 }
 
 export interface CategorySummaryRow {
