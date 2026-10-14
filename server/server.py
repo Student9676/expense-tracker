@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, FileResponse
 from plaid.api import plaid_api
+from plaid.model.accounts_get_request import AccountsGetRequest
 from plaid.model.country_code import CountryCode
 from plaid.model.institutions_get_by_id_request import InstitutionsGetByIdRequest
 from plaid.model.item_get_request import ItemGetRequest
@@ -28,6 +29,7 @@ from credentials import (
     get_access_token,
     get_item_access_token,
     item_token_account,
+    delete_bank_access_tokens,
 )
 from database import (
     init_database,
@@ -45,6 +47,9 @@ from database import (
     get_plaid_items,
     upsert_plaid_item,
     backfill_transaction_item_id,
+    delete_plaid_item,
+    delete_item_transactions,
+    count_transactions_by_account,
 )
 from server.classifier import (
     classify_transaction,
@@ -108,6 +113,16 @@ PLAID_COUNTRY_CODES = [
     if country.strip()
 ]
 PLAID_REDIRECT_URI = os.getenv("PLAID_REDIRECT_URI") or None
+# Only keep transactions from these Plaid account types, e.g. PLAID_ACCOUNT_TYPES=credit
+# (types: depository, credit, loan, investment). Empty keeps every account.
+PLAID_ACCOUNT_TYPES = [
+    kind.strip().lower()
+    for kind in os.getenv("PLAID_ACCOUNT_TYPES", "").split(",")
+    if kind.strip()
+]
+# Temporary switch for re-linking a bank that is already connected: the old connection and
+# its saved transactions are replaced by the new one. Turn it off again afterwards.
+REPLACE_EXISTING_BANK = os.getenv("PLAID_REPLACE_EXISTING_BANK", "").strip().lower() in {"1", "true", "yes"}
 
 
 def get_plaid_host():
@@ -184,13 +199,154 @@ def connection_status():
 
 @app.get(
     "/api/banks",
-    summary="List connected banks",
-    description="Return every connected bank with how many transactions it has saved. Access tokens are never returned.",
+    summary="List connected banks and their accounts",
+    description="Return every connected bank with the accounts Plaid has on it and how many transactions are saved for each. Access tokens are never returned.",
     status_code=200,
 )
 def list_banks():
-    """Return the connected banks."""
-    return {"banks": get_plaid_items()}
+    """Return the connected banks with their accounts."""
+    plaid_client = getattr(app.state, "plaid_client", None)
+    tokens = getattr(app.state, "access_tokens", None) or {}
+    saved = count_transactions_by_account()
+
+    banks = []
+    for item in get_plaid_items():
+        entry = {**item, "accounts": [], "accounts_error": None}
+        token = tokens.get(item["item_id"])
+        if not token:
+            entry["accounts_error"] = "No access token was found in the Keychain for this bank."
+        elif plaid_client is None:
+            entry["accounts_error"] = "The Plaid client is unavailable."
+        else:
+            try:
+                entry["accounts"] = [
+                    {
+                        "account_id": account["account_id"],
+                        "name": account.get("name"),
+                        "mask": account.get("mask"),
+                        "type": account_type_of(account),
+                        "subtype": str(getattr(account.get("subtype"), "value", account.get("subtype")) or ""),
+                        "transaction_count": saved.get(account["account_id"], 0),
+                        # False when PLAID_ACCOUNT_TYPES excludes this kind of account.
+                        "tracked": not PLAID_ACCOUNT_TYPES or account_type_of(account) in PLAID_ACCOUNT_TYPES,
+                    }
+                    for account in list_accounts(plaid_client, token)
+                ]
+            except Exception as exc:
+                entry["accounts_error"] = describe_sync_error(exc)
+        banks.append(entry)
+    return {"banks": banks}
+
+
+@app.delete(
+    "/api/banks/{item_id}",
+    summary="Disconnect a bank",
+    description="Remove the connection at Plaid, delete its access token from the Keychain and forget the bank. Saved transactions are kept unless delete_transactions is true.",
+    status_code=200,
+)
+def remove_bank(item_id: str, delete_transactions: bool = False):
+    """Disconnect one bank."""
+    item = next((i for i in get_plaid_items() if i["item_id"] == item_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="That bank is not connected.")
+
+    tokens = getattr(app.state, "access_tokens", None) or {}
+    token = tokens.get(item_id)
+    name = item["institution_name"]
+
+    # 1) Remove it at Plaid first, so a failure leaves everything as it was.
+    plaid_removed = False
+    if token:
+        plaid_client = getattr(app.state, "plaid_client", None)
+        if plaid_client is None:
+            raise HTTPException(
+                status_code=500,
+                detail="The Plaid client is unavailable, so nothing was deleted. Restart the server and try again.",
+            )
+        try:
+            plaid_client.item_remove(ItemRemoveRequest(access_token=token))
+            plaid_removed = True
+        except Exception as exc:
+            already_gone = (
+                isinstance(exc, plaid.ApiException)
+                and format_error(exc).get("error_code") == "ITEM_NOT_FOUND"
+            )
+            if not already_gone:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Plaid could not remove {name}: {describe_sync_error(exc)} Nothing was deleted.",
+                )
+            plaid_removed = True
+
+    # 2) Delete the access token from the Keychain.
+    warnings = []
+    keychain_removed = False
+    try:
+        delete_bank_access_tokens(PLAID_SERVICE_NAME, PLAID_ENV, item_id, token)
+        keychain_removed = True
+    except Exception as exc:
+        warnings.append(f"The bank was disconnected, but its Keychain entry could not be deleted: {exc}")
+
+    # 3) Forget the bank (and optionally its saved transactions).
+    transactions_deleted = delete_item_transactions(item_id) if delete_transactions else 0
+    delete_plaid_item(item_id)
+    tokens.pop(item_id, None)
+
+    return {
+        "status": "removed",
+        "item_id": item_id,
+        "institution_name": name,
+        "plaid_removed": plaid_removed,
+        "keychain_removed": keychain_removed,
+        "transactions_deleted": transactions_deleted,
+        "bank_count": len(tokens),
+        "warnings": warnings,
+    }
+
+
+@app.get(
+    "/api/debug/plaid",
+    summary="Show what Plaid has for each connected bank",
+    description="Diagnostic: the Link products configured, each connection's products, and every account Plaid returns with how many transactions are saved for it. Never returns access tokens.",
+    status_code=200,
+)
+def debug_plaid(
+    tokens: dict[str, str] = Depends(read_access_tokens),
+    plaid_client: plaid_api.PlaidApi = Depends(read_plaid_client),
+):
+    saved = count_transactions_by_account()
+    names = {item["item_id"]: item["institution_name"] for item in get_plaid_items()}
+    banks = []
+    for item_id, access_token in tokens.items():
+        entry = {"institution_name": names.get(item_id), "item_id": item_id}
+        try:
+            item = plaid_client.item_get(ItemGetRequest(access_token=access_token)).to_dict()["item"]
+            entry["item"] = {
+                key: item.get(key)
+                for key in ("products", "billed_products", "consented_products", "available_products", "error")
+            }
+            entry["accounts"] = [
+                {
+                    "name": account.get("name"),
+                    "mask": account.get("mask"),
+                    "type": account_type_of(account),
+                    "subtype": str(getattr(account.get("subtype"), "value", account.get("subtype"))),
+                    "account_id": account["account_id"],
+                    "transactions_saved": saved.get(account["account_id"], 0),
+                }
+                for account in list_accounts(plaid_client, access_token)
+            ]
+        except Exception as exc:
+            entry["error"] = describe_sync_error(exc)
+        banks.append(entry)
+    return jsonable_encoder(
+        {
+            "link_products_configured": PLAID_PRODUCTS,
+            "account_types_kept": PLAID_ACCOUNT_TYPES or "all",
+            "replace_existing_bank": REPLACE_EXISTING_BANK,
+            "banks": banks,
+        }
+    )
 
 
 @app.post(
@@ -341,15 +497,36 @@ async def set_access_token(request: Request, plaid_client: plaid_api.PlaidApi = 
         ),
         None,
     )
-    if duplicate:
+    if duplicate and not REPLACE_EXISTING_BANK:
         try:
             plaid_client.item_remove(ItemRemoveRequest(access_token=access_token))
         except Exception as exc:
             print(f"Could not remove duplicate item {info['item_id']}: {exc}")
         return JSONResponse(
-            content={"error": f"{duplicate['institution_name']} is already connected."},
+            content={
+                "error": f"{duplicate['institution_name']} is already connected. To re-link it "
+                "(for example to change which accounts are shared), set "
+                "PLAID_REPLACE_EXISTING_BANK=true in .env and restart the server."
+            },
             status_code=409,
         )
+    if duplicate:
+        # Replace the old connection: its transaction IDs would not match the new item's,
+        # so keeping them would show every transaction twice.
+        old_tokens = getattr(app.state, "access_tokens", None) or {}
+        old_token = old_tokens.pop(duplicate["item_id"], None)
+        if old_token:
+            try:
+                plaid_client.item_remove(ItemRemoveRequest(access_token=old_token))
+            except Exception as exc:
+                print(f"Could not remove old item {duplicate['item_id']} at Plaid: {exc}")
+        try:
+            delete_bank_access_tokens(PLAID_SERVICE_NAME, PLAID_ENV, duplicate["item_id"], old_token)
+        except Exception as exc:
+            print(f"Could not delete the old Keychain entry for {duplicate['item_id']}: {exc}")
+        removed_rows = delete_item_transactions(duplicate["item_id"])
+        delete_plaid_item(duplicate["item_id"])
+        print(f"Replaced {duplicate['institution_name']}: removed {removed_rows} saved transactions.")
 
     save_plaid_access_token(access_token, info["item_id"])
     upsert_plaid_item(info["item_id"], info["institution_id"], info["institution_name"])
@@ -427,6 +604,17 @@ def describe_sync_error(exc: Exception) -> str:
 SYNC_COUNT_KEYS = ("fetched", "inserted", "updated", "skipped", "pending_removed")
 
 
+def account_type_of(account: dict) -> str:
+    kind = account.get("type")
+    return str(getattr(kind, "value", kind) or "").lower()
+
+
+def list_accounts(plaid_client, access_token) -> list[dict]:
+    """The accounts Plaid has on one bank connection."""
+    response = plaid_client.accounts_get(AccountsGetRequest(access_token=access_token)).to_dict()
+    return response["accounts"]
+
+
 def sync_bank(plaid_client, item_id, access_token, institution_name, start_date, end_date):
     """Fetch and save one bank's transactions. Never raises: failures are reported in the result.
 
@@ -435,6 +623,13 @@ def sync_bank(plaid_client, item_id, access_token, institution_name, start_date,
     bank = {"item_id": item_id, "institution_name": institution_name}
     try:
         transactions = fetch_all_transactions(plaid_client, access_token, start_date, end_date)
+        if PLAID_ACCOUNT_TYPES:
+            allowed = {
+                account["account_id"]
+                for account in list_accounts(plaid_client, access_token)
+                if account_type_of(account) in PLAID_ACCOUNT_TYPES
+            }
+            transactions = [t for t in transactions if t.get("account_id") in allowed]
         # Convert dates and datetimes to ISO strings, the same JSON the client receives.
         result = save_transactions(
             jsonable_encoder(transactions), start_date, end_date, item_id=item_id

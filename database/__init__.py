@@ -13,7 +13,10 @@ from .database import (
     update_custom_expense,
     get_plaid_items,
     upsert_plaid_item,
-    backfill_transaction_item_id
+    backfill_transaction_item_id,
+    delete_plaid_item,
+    delete_item_transactions,
+    count_transactions_by_account
 )
 
 __all__ = [
@@ -31,5 +34,8 @@ __all__ = [
     "update_custom_expense",
     "get_plaid_items",
     "upsert_plaid_item",
-    "backfill_transaction_item_id"
+    "backfill_transaction_item_id",
+    "delete_plaid_item",
+    "delete_item_transactions",
+    "count_transactions_by_account"
 ]

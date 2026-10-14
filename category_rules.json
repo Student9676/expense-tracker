@@ -11,7 +11,62 @@
       "match_type": "contains"
     },
     {
+      "pattern": "PARK MOBILE",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "EMPIRE PARKING",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "LANIER PARKING",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Shell",
+      "category": "Gas & Fuel",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "U-Haul",
+      "category": "Moving & Storage",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "United Airlines",
+      "category": "Travel",
+      "match_type": "contains"
+    },
+    {
       "pattern": "McDonald's",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Benis Cubano",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Sarah Donuts",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PACIFIC RIM BISTRO",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ANTICO",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "365 MARKET",
       "category": "Dining & Food",
       "match_type": "contains"
     },
@@ -21,28 +76,28 @@
       "match_type": "contains"
     },
     {
-      "pattern": "SparkFun",
-      "category": "Electronics & Tech",
+      "pattern": "Whole Foods",
+      "category": "Groceries & Supplies",
       "match_type": "contains"
     },
     {
-      "pattern": "CREDIT CARD",
-      "category": "Bills & Payments",
+      "pattern": "Sam's Club",
+      "category": "Groceries & Supplies",
       "match_type": "contains"
     },
     {
-      "pattern": "United Airlines",
-      "category": "Travel",
+      "pattern": "QuikTrip",
+      "category": "Groceries & Supplies",
       "match_type": "contains"
     },
     {
-      "pattern": "INTRST PYMNT",
-      "category": "Banking & Fees",
+      "pattern": "PATEL BROTHERS",
+      "category": "Groceries & Supplies",
       "match_type": "contains"
     },
     {
-      "pattern": "Amazon",
-      "category": "Shopping",
+      "pattern": "SPROUTS FARMERS MAR",
+      "category": "Groceries & Supplies",
       "match_type": "contains"
     },
     {
@@ -56,12 +111,357 @@
       "match_type": "contains"
     },
     {
+      "pattern": "Dollar Tree",
+      "category": "Groceries & Supplies",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Costco",
+      "category": "Groceries & Supplies",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Amazon",
+      "category": "Shopping",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "FedEx",
+      "category": "Shipping & Delivery",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "MACYS",
+      "category": "Shopping",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ZAMS CLEANERS",
+      "category": "Personal Care",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "FREEDOM BARBER",
+      "category": "Personal Care",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "SparkFun",
+      "category": "Electronics & Tech",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Google Store",
+      "category": "Electronics & Tech",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "MICRO CENTER",
+      "category": "Electronics & Tech",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Home Depot",
+      "category": "Home & Utilities",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "GEORGIA POWER",
+      "category": "Home & Utilities",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "RING SOLO PLAN",
+      "category": "Home & Utilities",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CREDIT CARD",
+      "category": "Bills & Payments",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "INTRST PYMNT",
+      "category": "Banking & Fees",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "RESTORATION DENTAL",
+      "category": "Healthcare",
+      "match_type": "contains"
+    },
+    {
       "pattern": "Netflix",
       "category": "Subscriptions & Entertainment",
       "match_type": "contains"
     },
     {
       "pattern": "Spotify",
+      "category": "Subscriptions & Entertainment",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Hulu",
+      "category": "Subscriptions & Entertainment",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "YouTube",
+      "category": "Subscriptions & Entertainment",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Google Play Store",
+      "category": "Subscriptions & Entertainment",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PlayStation Network",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ATI*",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "INNER PEAKS",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PPS PARK MOBILE",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PAYMENT FROM CHK",
+      "category": "Credit Card Payments / Transfers",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CAPITAL ONE MOBILE PYMT",
+      "category": "Credit Card Payments / Transfers",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CASH REWARDS STATEMENT CREDIT",
+      "category": "Banking & Fees",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CREDIT-CASH BACK REWARD",
+      "category": "Banking & Fees",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CAMPANILEPROPERTY",
+      "category": "Banking & Fees",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "GLIDE PIZZA",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "TRUIST PARK CONCESSION",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ARDEN'S GARDEN",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Five Guys",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Chick-fil-A",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PHO BROTHERS",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "BAWARCHI BIRYANIS",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ZYKA",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "CHILI'S",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "NANDOS",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "BURGERS & FRIENDS",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "LITTLE CAESARS",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "IBERIAN PIG",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "DOORDASH",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "SMAK DELI",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "AMK TRUIST ITC",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ZAMBIES PIZZA",
+      "category": "Dining & Food",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "STUBHUB",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "TOPGOLF",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "TOP GOLF",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "STONE MTN PARK",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Regal Cinemas",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "SPORT SERVICES",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "DELAWARE NORTH",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PICKLEBALL",
+      "category": "Entertainment & Recreation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "Dunkin'",
+      "category": "Coffee & Cafes",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "TOLLWAY AUTH",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "LAZ PARKING",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "LAZ PKG",
+      "category": "Transportation",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "HONDA",
+      "category": "Automotive / Vehicle Maintenance",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "PEPBOYS",
+      "category": "Automotive / Vehicle Maintenance",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "AutoZone",
+      "category": "Automotive / Vehicle Maintenance",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "BP#",
+      "category": "Gas & Fuel",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "OVAEASY",
+      "category": "Groceries & Supplies",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "DANA INSPE",
+      "category": "Real Estate / Housing Costs",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "UWM APPRAISAL",
+      "category": "Real Estate / Housing Costs",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "ADVANTAGE CREDIT",
+      "category": "Real Estate / Housing Costs",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "EBAY",
+      "category": "Shopping",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "TOWER LOBBY SHOP",
+      "category": "Shopping",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "AKFUSA.ORG",
+      "category": "Charity / Donations",
+      "match_type": "contains"
+    },
+    {
+      "pattern": "G1SK003M",
       "category": "Subscriptions & Entertainment",
       "match_type": "contains"
     }

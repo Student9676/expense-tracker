@@ -529,6 +529,33 @@ def backfill_transaction_item_id(item_id: str) -> int:
         return cursor.rowcount
 
 
+def delete_plaid_item(item_id: str) -> None:
+    """Forget a connected bank (its transactions are kept; see delete_item_transactions)."""
+    with connect() as connection:
+        connection.execute("DELETE FROM plaid_items WHERE item_id = ?", (item_id,))
+
+
+def delete_item_transactions(item_id: str) -> int:
+    """Delete every saved transaction that came from one bank, plus its exclusions."""
+    with connect() as connection:
+        connection.execute(
+            "DELETE FROM transaction_exclusions WHERE transaction_id IN "
+            "(SELECT transaction_id FROM transactions WHERE item_id = ?)",
+            (item_id,),
+        )
+        cursor = connection.execute("DELETE FROM transactions WHERE item_id = ?", (item_id,))
+        return cursor.rowcount
+
+
+def count_transactions_by_account() -> dict[str, int]:
+    """How many transactions are saved for each Plaid account_id."""
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT account_id, COUNT(*) AS n FROM transactions GROUP BY account_id"
+        ).fetchall()
+        return {row["account_id"]: row["n"] for row in rows}
+
+
 # --- Monthly Income & Querying -----------------------------------------------
 
 

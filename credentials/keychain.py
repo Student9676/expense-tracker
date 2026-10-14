@@ -151,3 +151,33 @@ def get_item_access_token(service_name, plaid_env, item_id):
     if status != Security.errSecSuccess:
         return None
     return bytes(data).decode("utf-8")
+
+
+def _delete_keychain_item(service_name, account):
+    """Delete one generic-password item. A missing item counts as success."""
+    query = {
+        Security.kSecClass: Security.kSecClassGenericPassword,
+        Security.kSecAttrService: service_name,
+        Security.kSecAttrAccount: account,
+    }
+    status = Security.SecItemDelete(query)
+    return status in (Security.errSecSuccess, Security.errSecItemNotFound)
+
+
+def delete_bank_access_tokens(service_name, plaid_env, item_id, access_token=None):
+    """Delete a bank's access token from the macOS Keychain.
+
+    Also removes the single-token entry used before multi-bank support when it holds this
+    same token. Otherwise the server would adopt it again at the next startup and the
+    deleted bank would reappear.
+    """
+    if not service_name or not item_id:
+        raise ValueError("service_name and item_id are required")
+
+    if not _delete_keychain_item(service_name, item_token_account(plaid_env, item_id)):
+        raise RuntimeError("Unable to delete the bank's Keychain item")
+
+    legacy_token = get_access_token(service_name, plaid_env)
+    if legacy_token and access_token and legacy_token == access_token:
+        if not _delete_keychain_item(service_name, f"plaid_access_token_{plaid_env}"):
+            raise RuntimeError("Unable to delete the legacy Keychain item")

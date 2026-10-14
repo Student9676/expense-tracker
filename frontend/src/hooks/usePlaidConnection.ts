@@ -107,6 +107,20 @@ export function usePlaidConnection() {
     }
   }, [])
 
+  /** Re-check whether any bank is still connected, e.g. after one was removed. */
+  const refreshConnectionStatus = useCallback(async () => {
+    try {
+      const { connected } = await plaidApi.getConnectionStatus()
+      connectedRef.current = connected
+      if (!connected) {
+        setConnectionSource(null)
+        setStage((current) => (current === 'connected' ? 'idle' : current))
+      }
+    } catch {
+      // Best effort: the status is re-checked on the next page load.
+    }
+  }, [])
+
   const runCheckServer = useCallback(async () => {
     setStage('checking-server')
     setOutput(await plaidApi.checkServer())
@@ -165,6 +179,7 @@ export function usePlaidConnection() {
     output,
     errorMessage,
     connect,
+    refreshConnectionStatus,
     manual: {
       checkServer: runManualStep(runCheckServer),
       initialize: runManualStep(runInitialize),

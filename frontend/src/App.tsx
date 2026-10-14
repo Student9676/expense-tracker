@@ -30,6 +30,7 @@ function App() {
     output,
     errorMessage,
     connect,
+    refreshConnectionStatus,
     manual,
   } = usePlaidConnection()
   const transactions = useTransactions()
@@ -109,7 +110,12 @@ function App() {
                 </p>
               )}
 
-              <ConnectedBanks stage={stage} busy={busy} onAddBank={connect} />
+              <ConnectedBanks
+                stage={stage}
+                busy={busy}
+                onAddBank={connect}
+                onBanksChanged={refreshConnectionStatus}
+              />
             </div>
 
             <AdvancedPanel
