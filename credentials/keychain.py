@@ -132,3 +132,22 @@ def get_access_token(service_name, plaid_env):
     if status != Security.errSecSuccess:
         return None
     return bytes(data).decode("utf-8")
+
+
+def item_token_account(plaid_env, item_id):
+    """Keychain account name for one bank's access token."""
+    return f"plaid_access_token_{plaid_env}_{item_id}"
+
+
+def get_item_access_token(service_name, plaid_env, item_id):
+    """Retrieve the access token saved for one connected bank, or None if missing."""
+    query = {
+        Security.kSecClass: Security.kSecClassGenericPassword,
+        Security.kSecAttrService: service_name,
+        Security.kSecAttrAccount: item_token_account(plaid_env, item_id),
+        Security.kSecReturnData: True,
+    }
+    status, data = Security.SecItemCopyMatching(query, None)
+    if status != Security.errSecSuccess:
+        return None
+    return bytes(data).decode("utf-8")

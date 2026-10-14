@@ -34,6 +34,7 @@ import uuid
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (
     transaction_id                TEXT PRIMARY KEY,
+    item_id                       TEXT,
     account_id                    TEXT,
     account_owner                 TEXT,
     amount                        REAL,
@@ -88,6 +89,15 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions (account_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_pfc_primary ON transactions (pfc_primary);
+
+-- One row per connected bank (a Plaid "item"). The access token is NOT stored here;
+-- it lives in the macOS Keychain under this item_id.
+CREATE TABLE IF NOT EXISTS plaid_items (
+    item_id          TEXT PRIMARY KEY,
+    institution_id   TEXT,
+    institution_name TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS transaction_counterparties (
     transaction_id   TEXT NOT NULL REFERENCES transactions (transaction_id) ON DELETE CASCADE,
@@ -161,9 +171,16 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 def init_database() -> None:
-    """Create the tables and indexes if they do not exist yet."""
+    """Create the tables and indexes if they do not exist yet, and upgrade older databases."""
     with connect() as connection:
         connection.executescript(SCHEMA)
+        # Databases created before multi-bank support have no item_id column.
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(transactions)")}
+        if "item_id" not in columns:
+            connection.execute("ALTER TABLE transactions ADD COLUMN item_id TEXT")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transactions_item_id ON transactions (item_id)"
+        )
 
 
 # --- Value normalization -----------------------------------------------------
@@ -234,7 +251,9 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def build_transaction_row(transaction: Any, saved_at: str) -> dict[str, Any] | None:
+def build_transaction_row(
+    transaction: Any, saved_at: str, item_id: str | None = None
+) -> dict[str, Any] | None:
     """Flatten one Plaid transaction into a table row, or None if it has no ID."""
     if not isinstance(transaction, dict):
         return None
@@ -247,7 +266,7 @@ def build_transaction_row(transaction: Any, saved_at: str) -> dict[str, Any] | N
     payment_meta = as_dict(transaction.get("payment_meta"))
     finance_category = as_dict(transaction.get("personal_finance_category"))
 
-    return {
+    row = {
         "transaction_id": transaction_id,
         "account_id": clean_text(transaction.get("account_id")),
         "account_owner": clean_text(transaction.get("account_owner")),
@@ -299,6 +318,10 @@ def build_transaction_row(transaction: Any, saved_at: str) -> dict[str, Any] | N
         "first_saved_at": saved_at,
         "last_saved_at": saved_at,
     }
+    # Only set item_id when known, so re-saving without it never erases an existing value.
+    if item_id is not None:
+        row["item_id"] = item_id
+    return row
 
 
 def build_counterparty_rows(transaction: dict, transaction_id: str) -> list[dict[str, Any]]:
@@ -367,6 +390,7 @@ def _remove_stale_pending(
     returned_ids: set[str],
     start_date: date,
     end_date: date,
+    item_id: str | None = None,
 ) -> int:
     """Delete pending transactions that Plaid has replaced or dropped.
 
@@ -374,14 +398,19 @@ def _remove_stale_pending(
     new ID that points back at it through ``pending_transaction_id``. Without this
     cleanup both rows would stay and the amount would be counted twice. Pending rows
     inside the fetched date range that Plaid no longer returns were cancelled.
+
+    When ``item_id`` is given only that bank's rows are considered. Without this, syncing
+    one bank would delete every other bank's pending transactions, since Plaid only
+    returns the bank that was asked for.
     """
     stale_ids = set(superseded_ids)
 
-    in_range = connection.execute(
-        "SELECT transaction_id FROM transactions "
-        "WHERE pending = 1 AND date BETWEEN ? AND ?",
-        (start_date.isoformat(), end_date.isoformat()),
-    ).fetchall()
+    query = "SELECT transaction_id FROM transactions WHERE pending = 1 AND date BETWEEN ? AND ?"
+    params: list[Any] = [start_date.isoformat(), end_date.isoformat()]
+    if item_id is not None:
+        query += " AND item_id = ?"
+        params.append(item_id)
+    in_range = connection.execute(query, params).fetchall()
     stale_ids.update(row["transaction_id"] for row in in_range if row["transaction_id"] not in returned_ids)
 
     removed = 0
@@ -394,12 +423,20 @@ def _remove_stale_pending(
     return removed
 
 
-def save_transactions(transactions: list[Any], start_date: date, end_date: date) -> dict[str, int]:
+def save_transactions(
+    transactions: list[Any],
+    start_date: date,
+    end_date: date,
+    item_id: str | None = None,
+) -> dict[str, int]:
     """Save every transaction Plaid returned for the date range.
 
     Safe to run repeatedly: transactions are matched by ``transaction_id`` and updated
     in place. Everything happens in one database transaction, so a failure part-way
     through saves nothing. Returns counts describing what happened.
+
+    ``item_id`` identifies the bank the transactions came from. It is stored on every row
+    and limits the stale-pending cleanup to that bank.
     """
     saved_at = utc_now()
     inserted = 0
@@ -410,7 +447,7 @@ def save_transactions(transactions: list[Any], start_date: date, end_date: date)
 
     with connect() as connection:
         for transaction in transactions:
-            row = build_transaction_row(transaction, saved_at)
+            row = build_transaction_row(transaction, saved_at, item_id)
             if row is None:
                 skipped += 1
                 continue
@@ -430,7 +467,7 @@ def save_transactions(transactions: list[Any], start_date: date, end_date: date)
                 superseded_ids.add(row["pending_transaction_id"])
 
         pending_removed = _remove_stale_pending(
-            connection, superseded_ids - returned_ids, returned_ids, start_date, end_date
+            connection, superseded_ids - returned_ids, returned_ids, start_date, end_date, item_id
         )
         total = connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
 
@@ -442,6 +479,54 @@ def save_transactions(transactions: list[Any], start_date: date, end_date: date)
         "pending_removed": pending_removed,
         "total_in_database": total,
     }
+
+
+# --- Connected banks ----------------------------------------------------------
+
+
+def upsert_plaid_item(
+    item_id: str, institution_id: str | None, institution_name: str | None
+) -> dict[str, Any]:
+    """Register a connected bank, or refresh its name if it is already registered."""
+    clean_item = clean_text(item_id)
+    if not clean_item:
+        raise ValueError("item_id is required")
+    name = clean_text(institution_name) or "Connected bank"
+    now = utc_now()
+    with connect() as connection:
+        connection.execute(
+            "INSERT INTO plaid_items (item_id, institution_id, institution_name, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (item_id) DO UPDATE SET "
+            "institution_id = excluded.institution_id, institution_name = excluded.institution_name",
+            (clean_item, clean_text(institution_id), name, now),
+        )
+        row = connection.execute(
+            "SELECT item_id, institution_id, institution_name, created_at "
+            "FROM plaid_items WHERE item_id = ?",
+            (clean_item,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_plaid_items() -> list[dict[str, Any]]:
+    """Return every connected bank, oldest first, with how many transactions it has."""
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT i.item_id, i.institution_id, i.institution_name, i.created_at, "
+            "(SELECT COUNT(*) FROM transactions t WHERE t.item_id = i.item_id) AS transaction_count "
+            "FROM plaid_items i ORDER BY i.created_at, i.item_id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def backfill_transaction_item_id(item_id: str) -> int:
+    """Assign a bank to saved transactions that predate multi-bank support."""
+    with connect() as connection:
+        cursor = connection.execute(
+            "UPDATE transactions SET item_id = ? WHERE item_id IS NULL", (item_id,)
+        )
+        return cursor.rowcount
 
 
 # --- Monthly Income & Querying -----------------------------------------------
@@ -517,25 +602,26 @@ def get_saved_transactions(
 ) -> list[dict[str, Any]]:
     """Retrieve saved transactions from the database with optional month and expense filtering."""
     query = (
-        "SELECT transaction_id, name, merchant_name, amount, amount_cents, "
-        "iso_currency_code, date, datetime, category, pfc_primary, pfc_detailed "
-        "FROM transactions"
+        "SELECT t.transaction_id, t.item_id, i.institution_name, t.name, t.merchant_name, "
+        "t.amount, t.amount_cents, t.iso_currency_code, t.date, t.datetime, t.category, "
+        "t.pfc_primary, t.pfc_detailed "
+        "FROM transactions t LEFT JOIN plaid_items i ON i.item_id = t.item_id"
     )
     clauses: list[str] = []
     params: list[Any] = []
 
     clean_m = clean_text(month)
     if clean_m and clean_m.lower() != "all":
-        clauses.append("strftime('%Y-%m', date) = ?")
+        clauses.append("strftime('%Y-%m', t.date) = ?")
         params.append(clean_m)
 
     if expenses_only:
-        clauses.append("amount > 0")
+        clauses.append("t.amount > 0")
 
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
 
-    query += " ORDER BY date DESC, transaction_id DESC"
+    query += " ORDER BY t.date DESC, t.transaction_id DESC"
 
     with connect() as connection:
         rows = connection.execute(query, params).fetchall()

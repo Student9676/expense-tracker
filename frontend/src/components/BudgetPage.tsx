@@ -295,6 +295,16 @@ export function BudgetPage() {
         )
         await refreshExpenses()
         setTimeout(() => setRefreshMessage(null), 6000)
+
+        // Some banks may have failed (for example a login that needs to be redone).
+        const failed = (res.banks ?? []).filter((bank) => bank.status === 'error')
+        if (failed.length > 0) {
+          setRefreshError(
+            `Could not refresh ${failed
+              .map((bank) => `${bank.institution_name} (${bank.error ?? 'unknown error'})`)
+              .join(', ')}. Other banks were updated.`,
+          )
+        }
       } catch (err) {
         const detail =
           err instanceof Error
@@ -366,6 +376,12 @@ export function BudgetPage() {
     if (selectedMonth && selectedMonth.toLowerCase() !== 'all') set.add(selectedMonth)
     return Array.from(set).sort((a, b) => b.localeCompare(a))
   }, [availableMonths, selectedMonth])
+
+  // Only label rows with their bank once more than one bank has transactions
+  const showBankBadge = useMemo(
+    () => new Set(expenses.map((e) => e.institution_name).filter(Boolean)).size > 1,
+    [expenses],
+  )
 
   // Unique categories in current transactions
   const uniqueCategories = useMemo(() => {
@@ -710,6 +726,9 @@ export function BudgetPage() {
                             <span className="expense-sub">{item.merchant_name}</span>
                           )}
                           <div className="badges-wrap">
+                            {showBankBadge && item.institution_name && (
+                              <span className="badge badge--bank">{item.institution_name}</span>
+                            )}
                             {item.is_custom && (
                               <span className="badge badge--custom">Custom</span>
                             )}
