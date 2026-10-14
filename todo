@@ -1,3 +1,4 @@
 chart shows other slice combining different smaller categories -- should be detailed
 should be able to edit categories by quickly creating a category rule from row in table
 possibly utilize category data from db for classification?
+add option for weekly recurring transactions in addition to monthly
