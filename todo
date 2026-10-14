@@ -4,3 +4,4 @@ possibly utilize category data from db for classification?
 add option for weekly recurring transactions in addition to monthly
 improve UI to look less vibe coded
 make app use https
+make frontend and backend shutdown on close using SIGTERM and beacon; are these processes even being left alive? -- check
