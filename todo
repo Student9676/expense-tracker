@@ -3,3 +3,4 @@ should be able to edit categories by quickly creating a category rule from row i
 possibly utilize category data from db for classification?
 add option for weekly recurring transactions in addition to monthly
 improve UI to look less vibe coded
+make app use https
