@@ -8,3 +8,7 @@ make frontend and backend shutdown on close using SIGTERM and beacon; are these 
 use electron to make this app a packaged mac app
 make transactions clickable to see all metadata
 add ability to see line graphs and other charts for specific presets of time ranges or for custom ranges
+add a undo opion for deletion
+add data view feature
+make all setup through gui
+find a way to get pending transactions
