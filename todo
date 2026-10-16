@@ -6,3 +6,5 @@ improve UI to look less vibe coded
 make app use https
 make frontend and backend shutdown on close using SIGTERM and beacon; are these processes even being left alive? -- check
 use electron to make this app a packaged mac app
+make transactions clickable to see all metadata
+add ability to see line graphs and other charts for specific presets of time ranges or for custom ranges
